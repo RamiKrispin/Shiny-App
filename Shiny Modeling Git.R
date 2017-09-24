@@ -2,8 +2,7 @@
 set.seed(1234)
 #Setting the required packages
 pkgs <- c("shiny", "shinydashboard", "shinyWidgets",
-          "ggplot2", "plotly",
-          "caret", "randomForest",
+          "plotly",
           "dplyr", "data.table", "lubridate", "reshape2",
           "DT", "knitr", "kableExtra",
           "datasets"
@@ -11,13 +10,12 @@ pkgs <- c("shiny", "shinydashboard", "shinyWidgets",
 
 for(pkg in pkgs){
   if(!(pkg %in% rownames(installed.packages()))){
-    install.packages(pkg)
+    install.packages(pkg, dependencies = TRUE)
   }
   lapply(pkg, FUN = function(X) {
     do.call("require", list(X))
   })
 }
-
 #------------------------------ Loading Functions -------------------------------------
 col_num <- function(df){
   if(ncol(df)%%3 !=0){
@@ -69,9 +67,21 @@ accuracy_fun <- function(train, test){
 r_dataset <- NULL
 pack_list <- installed.packages()
 
+packages.list <- as.data.frame(installed.packages(), stringsAsFactors = FALSE)
 
-d <- data(package = pack_list[,"Package"])
-installed_datasets <- as.list(paste(d$results[,"Package"],"-" ,d$results[,"Item"], sep = " "))
+d <- data(package = packages.list$Package)
+
+#d <- data(package = pack_list[,"Package"])
+dataset.df <- data.frame(package = d$results[,"Package"], dataset =  d$results[,"Item"] ,
+                         space = regexpr(" ",d$results[,"Item"]), 
+                         stringsAsFactors = FALSE )
+
+dataset.df$dataset.fixed <- ifelse(dataset.df$space != -1, 
+                                   substr(dataset.df$dataset, 1, (dataset.df$space - 1)), 
+                                   dataset.df$dataset)
+
+
+installed_datasets <- as.list(paste(dataset.df$package,"-" ,dataset.df$dataset.fixed, sep = " "))
 #------------------------------ Creating list of the avilable data frames/matrices/ time series -------------------------------------
 df_list <- c(names(which(sapply(.GlobalEnv, is.data.frame))),
              names(which(sapply(.GlobalEnv, is.matrix))),
@@ -85,6 +95,7 @@ server <- function(input, output,session) {
   input_df <- reactiveValues(counter = 0,
                              data_name = NULL,
                              ts_obj = NULL,
+                             mts_obj = NULL,
                              df_list = NULL,
                              df_class = NULL,
                              names_list = NULL,
@@ -260,7 +271,7 @@ server <- function(input, output,session) {
   })
   
   # Load the data according to the user selection  
-  df_view <- reactive({
+  df_tbl_view <- reactive({
     prev_table$class <- NULL
     if(input$data_source == "data_frame" & length(prev_table$data_frame_list) != 0){
       df_view <- NULL
@@ -281,7 +292,12 @@ server <- function(input, output,session) {
       prev_table$df_name <- input$df_to_load
       input_df$ts_obj <- get(input$df_to_load)
       df_view <- get(input$df_to_load)
-      df_view <- data.frame(Y=as.matrix(df_view), date=time(df_view))
+      if(is.mts(df_view)){
+        df_view <- data.frame(date=time(df_view), as.matrix(df_view))
+      } else if(is.ts(df_view)){
+        df_view <- data.frame(date=time(df_view), as.matrix(df_view))
+        names(df_view) <- c("date", prev_table$df_name)
+      }
       if(length(class(input_df$ts_obj)) > 1 & "ts" %in% class(input_df$ts_obj)){
         prev_table$class <- "ts"
       } else if(length(class(input_df$ts_obj)) > 1){
@@ -292,40 +308,52 @@ server <- function(input, output,session) {
       # Loading from installed package
     } else if(input$data_source == "inst_pack" & length(prev_table$r_datasets) != 0){
       df_view <- NULL
+      dataset_name <- NULL
       dataset_name <- substr(input$df_to_load, 
                              regexpr("-", input$df_to_load) + 2,
                              nchar(trimws(input$df_to_load)))
-      
+      package_name <- substr(input$df_to_load, 
+                             1, (regexpr("-", input$df_to_load) - 2)
+      )
+      if(!paste("package:", package_name, sep = "") %in% search()){
+        p <- NULL
+        p <- as.list(package_name)
+        do.call("require", p)
+      }
       # Loading the selected dataset
       prev_table$df_name <- dataset_name
-      
-      df_view <- try(get(dataset_name), silent = TRUE)
-      if(class(df_view) == "try-error"){
-        showModal(modalDialog(
-          title = "Warning - Cannot Load the Dataset",
-          HTML(paste("Cannot Load the Dataset:",
-                     "- The package index name is not match the package name",
-                     "- or the dataset format cannot be loaded",
-                     sep = "<br/>")
-          ), size = "s"
-        ))
-        output$load_flag <- reactive('0')
-        outputOptions(output, "load_flag", suspendWhenHidden = FALSE)
+      if(!is.na(dataset_name)){
+        if(dataset_name != "NA"){
+          df_view <- try(get(dataset_name), silent = TRUE)
+          if(class(df_view) == "try-error" & !is.na(dataset_name)){
+            
+            showModal(modalDialog(
+              title = "Warning - Cannot Load the Dataset",
+              HTML(paste("Cannot Load the Dataset:",
+                         "- The package index name is not match the package name",
+                         "- or the dataset format cannot be loaded",
+                         sep = "<br/>")
+              ), size = "s"
+            ))
+            output$load_flag <- reactive('0')
+            outputOptions(output, "load_flag", suspendWhenHidden = FALSE)
+          }
+        }
       }
       if(class(df_view) != "try-error"){
         output$load_flag <- reactive('2')
         outputOptions(output, "load_flag", suspendWhenHidden = FALSE)
-        if(is.ts(df_view)){
+        
+        if(is.mts(df_view)){
+          input_df$mts_obj <- df_view
+          df_view <- data.frame(date=time(df_view), as.matrix(df_view))
+          prev_table$class <- "mts"
+        } else if(is.ts(df_view)){
           input_df$ts_obj <- df_view
-          df_view <- data.frame(Y=as.matrix(df_view), date=time(df_view))
-          if(length(class(input_df$ts_obj)) > 1 & "ts" %in% class(input_df$ts_obj)){
-            prev_table$class <- "ts"
-          } else if(length(class(input_df$ts_obj)) > 1){
-            prev_table$class <- class(input_df$ts_obj)[1]
-          } else{
-            prev_table$class <- class(input_df$ts_obj)
-          }
-        } else if(any(class(df_view) %in% c("data.frame","matrix", "data.table"))){
+          df_view <- data.frame(date=time(df_view), as.matrix(df_view))
+          names(df_view) <- c("date", prev_table$df_name)
+          prev_table$class <- "ts"
+        } else if(any(class(df_view) %in% c("data.frame","matrix", "data.table", "table"))){
           if(length(class(df_view)) > 1 & "data.frame" %in% class(df_view)){
             prev_table$class <- "data.frame"
             df_view <- as.data.frame(df_view)
@@ -372,7 +400,7 @@ server <- function(input, output,session) {
   
   # View of the data
   output$view_table <- DT::renderDataTable(
-    df_view(), 
+    df_tbl_view(), 
     server = FALSE, 
     rownames = FALSE,
     options = list(pageLength = 10,
@@ -384,9 +412,10 @@ server <- function(input, output,session) {
     name <- prev_table$df_name
     type <- NULL
     type <- ifelse(prev_table$class == "data.frame", "Data Frame",
-                   ifelse(prev_table$class == "ts", "Time Series", 
-                          ifelse(prev_table$class == "matrix", "Matrix", 
-                                 prev_table$class )))
+                   ifelse(prev_table$class == "ts", "Time Series",
+                          ifelse(prev_table$class == "mts", "Multiple Time Series",
+                                 ifelse(prev_table$class == "matrix", "Matrix", 
+                                        prev_table$class ))))
     
     
     
@@ -394,15 +423,15 @@ server <- function(input, output,session) {
       input_df$data_name <- c(input_df$data_name, name)
       if(is.null(input_df$loaded_table)){
         input_df$loaded_table <- data.frame(name = name,
-                                            var = ncol(df_view()),
-                                            row = nrow(df_view()),
+                                            var = ncol(df_tbl_view()),
+                                            row = nrow(df_tbl_view()),
                                             class = type,
                                             stringsAsFactors = FALSE)
         
       } else {
         temp <- data.frame(name = name,
-                           var = ncol(df_view()),
-                           row = nrow(df_view()),
+                           var = ncol(df_tbl_view()),
+                           row = nrow(df_tbl_view()),
                            class = type,
                            stringsAsFactors = FALSE)
         input_df$loaded_table <- rbind(input_df$loaded_table,temp)
@@ -411,7 +440,7 @@ server <- function(input, output,session) {
       }
       if(is.null(input_df$df_list)){
         if(prev_table$class != "ts"){
-          input_df$df_list <- list(df_view())
+          input_df$df_list <- list(df_tbl_view())
         } else {
           input_df$df_list <- list(input_df$ts_obj)
         }
@@ -419,7 +448,7 @@ server <- function(input, output,session) {
         
       } else {
         if(prev_table$class != "ts"){
-          input_df$df_list[[length(input_df$df_list) + 1]] <- df_view()
+          input_df$df_list[[length(input_df$df_list) + 1]] <- df_tbl_view()
         } else {
           input_df$df_list[[length(input_df$df_list) + 1]] <- input_df$ts_obj
         }
@@ -429,7 +458,7 @@ server <- function(input, output,session) {
       input_df$names_list <- names(input_df$df_list)
     } else{
       if(prev_table$class != "ts"){
-        input_df$df_list[[which(names(input_df$df_list) == name)]] <- df_view()
+        input_df$df_list[[which(names(input_df$df_list) == name)]] <- df_tbl_view()
       } else {
         input_df$df_list[[which(names(input_df$df_list) == name)]] <- input_df$ts_obj
       }
@@ -543,7 +572,16 @@ server <- function(input, output,session) {
       } 
     } else {
       output$data_tab2_ts <- renderPlotly({
-        plot_ly( x = time(input_df$df), y = input_df$df, type  = "scatter", mode = "line")
+        
+        
+        if(!input$ts_plot_log){
+          plot_ly( x = time(input_df$df), y = input_df$df, type  = "scatter", mode = input$ts_prep_mode)
+        } else if(input$ts_plot_log){
+          plot_ly( x = time(input_df$df), 
+                   y = log(input_df$df, base = exp(1)), type  = "scatter", mode = input$ts_prep_mode) %>%
+            layout(title = "Log Transformation")
+        }
+        
       })
     }
   })
@@ -730,7 +768,35 @@ server <- function(input, output,session) {
     input$select_df_vis},{
       if(!is.null(vis_df$var_numeric) & !is.ts(vis_df$df)){
         ###################### NEED TO ADD CASE FOR ONLY ONE VARIABE !!!!!!
-        if(length(vis_df$var_numeric) > 1 ){
+        if(length(vis_df$var_numeric) == 1 ){
+          output$vis_plot_type <- renderUI({
+            selectInput("plot_type", "Select the Plot Type",
+                        choices = list("Boxplot" = "box",
+                                       "Histogram" = "hist",
+                                       "Density" = "density"))
+          })
+          output$vis_one_var <- renderUI({
+            selectInput("plot_var", "Select a Variable",
+                        choices = vis_df$var_numeric,
+                        selected = vis_df$var_numeric[1]
+            )
+          })
+          
+          output$vis_factor <- renderUI({
+            if(!is.null(vis_df$var_factor)){
+              selectInput(
+                "plot_factor", "Add Categorical Variable",
+                choices = c("None", as.character(vis_df$var_factor))
+              )
+            } else {
+              selectInput(
+                "plot_factor", "Add Categorical Variable",
+                choices = "NA"
+              )
+            }
+          })
+          
+        } else if(length(vis_df$var_numeric) > 1 ){
           output$vis_plot_type <- renderUI({
             selectInput("plot_type", "Select the Plot Type",
                         choices = list("Scatter" = "scatter",
@@ -813,8 +879,11 @@ server <- function(input, output,session) {
       if(!is.ts(vis_df$df)){
         p <- x <- y <- color <-   NULL
         
-        
-        y <- vis_df$df[,input$plot_y]
+        if(length(vis_df$var_numeric) > 1){
+          y <- vis_df$df[,input$plot_y]
+        } else if(length(vis_df$var_numeric) == 1){
+          y <- NA
+        }
         
         if(input$plot_type == "box" | input$plot_type == "density"){
           x <- vis_df$df[, input$plot_var]
@@ -1016,8 +1085,8 @@ server <- function(input, output,session) {
   outputOptions(output, "class_df_flag_vis", suspendWhenHidden = FALSE)  
   #------------------------------ Server Function - End -------------------------------------  
 }
-#------------------------------ Call the App -------------------------------------
-library(shinydashboard)
+
+
 #------------------------------ UI Function -------------------------------------
 ui <- dashboardPage(
   dashboardHeader(),
@@ -1184,6 +1253,19 @@ ui <- dashboardPage(
                   ),
                   conditionalPanel(condition =  "output.loaded_table_flag == '1' && output.class_df_flag == true ",
                                    box(width = 8, title = "Time Series Plot",
+                                       dropdownButton(
+                                         tags$h3("List of Input"),
+                                         materialSwitch(inputId = "ts_plot_log", label = "Log Transformation", 
+                                                        status = "primary", right = FALSE),
+                                         awesomeRadio(inputId = "ts_prep_mode", 
+                                                      label = "Radio buttons", 
+                                                      choices = c("lines","lines+markers", "markers")
+                                                      , selected = "lines"),
+                                         
+                                         
+                                         circle = TRUE, status = "danger", icon = icon("gear"), width = "200px",
+                                         tooltip = tooltipOptions(title = "Click to see inputs !")
+                                       ),
                                        plotlyOutput("data_tab2_ts")
                                        
                                    )
@@ -1244,4 +1326,5 @@ ui <- dashboardPage(
   )
 )
 
-shinyApp(ui = ui, server = server)
+#------------------------------ Call the App -------------------------------------
+runApp(list(ui = ui, server = server), launch.browser = TRUE)
