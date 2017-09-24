@@ -165,6 +165,19 @@ tabItem(tabName = "data2",
           ),
           conditionalPanel(condition =  "output.loaded_table_flag == '1' && output.class_df_flag == true ",
                            box(width = 8, title = "Time Series Plot",
+                               dropdownButton(
+                                 tags$h3("List of Input"),
+                                 materialSwitch(inputId = "ts_plot_log", label = "Log Transformation", 
+                                                status = "primary", right = FALSE),
+                                 awesomeRadio(inputId = "ts_prep_mode", 
+                                              label = "Radio buttons", 
+                                              choices = c("lines","lines+markers", "markers")
+                                              , selected = "lines"),
+                                 
+                                 
+                                 circle = TRUE, status = "danger", icon = icon("gear"), width = "200px",
+                                 tooltip = tooltipOptions(title = "Click to see inputs !")
+                               ),
                                plotlyOutput("data_tab2_ts")
                                
                            )
