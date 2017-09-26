@@ -16,12 +16,27 @@ for(pkg in pkgs){
     do.call("require", list(X))
   })
 }
+
+
 #------------------------------ Loading Functions -------------------------------------
 col_num <- function(df){
   if(ncol(df)%%3 !=0){
     x <- ncol(df)%/%3 +1
   } else {x <- ncol(df)%/%3}
   return (x)
+}
+
+# Checking the available memory (RAM)
+get_free_ram <- function(){
+  if(Sys.info()[["sysname"]] == "Windows"){
+    x <- system2("wmic", args =  "OS get FreePhysicalMemory /Value", stdout = TRUE)
+    x <- x[grepl("FreePhysicalMemory", x)]
+    x <- gsub("FreePhysicalMemory=", "", x, fixed = TRUE)
+    x <- gsub("\r", "", x, fixed = TRUE)
+    as.integer(x)
+  } else {
+    stop("Only supported on Windows OS")
+  }
 }
 #------------------------------ Confusion Matrix Function -------------------------------------
 
@@ -1083,21 +1098,156 @@ server <- function(input, output,session) {
     ifelse(is.ts(vis_df$df), TRUE, FALSE)
   })
   outputOptions(output, "class_df_flag_vis", suspendWhenHidden = FALSE)  
+  
+  #------------------------------ H2O Functions ------------------------------------- 
+  
+  #------------------------------ input_df - set initial parameters -------------------------------------
+  
+  h2o_df <- reactiveValues(status = FALSE)
+  
+  
+  
+  
+  
+  
+  observeEvent({
+    input$package
+    
+  },{
+    if("H2O" %in% input$package){
+      if(!"h2o" %in% installed.packages()){
+        
+        showModal(modalDialog(
+          title = "Warning - H2O is not Available",
+          HTML(paste("The H2O package is not installed.", 
+                     "Please install the package to continue.", 
+                     sep = "<br/>")
+          ), size = "s"
+        ))
+        output$h2o_flag <- reactive("0")
+        outputOptions(output, "h2o_flag", suspendWhenHidden = FALSE)
+      } else if("h2o" %in% installed.packages() & !"package:h2o" %in% search()){
+        output$h2o_flag <- reactive("1")
+        print("Need to Load")
+        outputOptions(output, "h2o_flag", suspendWhenHidden = FALSE)
+      } else if("h2o" %in% installed.packages() & "package:h2o" %in% search()){
+        output$h2o_flag <- reactive("2")
+        outputOptions(output, "h2o_flag", suspendWhenHidden = FALSE)
+        print("No Need to Load")
+      }
+    } else {
+      print("YYY")
+    }
+  })
+  
+  # Load H2O
+  observeEvent(input$load_h2o,{
+    require(h2o)
+    if ("h2o" %in% installed.packages() & "package:h2o" %in% search()){
+      output$h2o_flag <- reactive("2")
+      outputOptions(output, "h2o_flag", suspendWhenHidden = FALSE)
+      
+    } else if("h2o" %in% installed.packages() & !"package:h2o" %in% search()){
+      showModal(modalDialog(
+        title = "Warning - Failed to Load H2O",
+        HTML(paste("Could not load H2O, please check if the package was installed currectly", 
+                   "For further information, please check H2O User Documentation:",
+                   "https://h2o-release.s3.amazonaws.com/h2o/rel-weierstrass/3/index.html",
+                   sep = "<br/>")
+        ), size = "s"
+      ))
+    }
+  })
+  
+  # Install H2O
+  observeEvent(input$install_h2o,{
+    # The following two commands remove any previously installed H2O packages for R.
+    if ("package:h2o" %in% search()) { detach("package:h2o", unload=TRUE) }
+    if ("h2o" %in% rownames(installed.packages())) { remove.packages("h2o") }
+    
+    # Next, we download packages that H2O depends on.
+    pkgs <- c("statmod","RCurl","jsonlite")
+    for (pkg in pkgs) {
+      if (! (pkg %in% rownames(installed.packages()))) { install.packages(pkg) }
+    }
+    
+    # Now we download, install and initialize the H2O package for R.
+    install.packages("h2o", type="source", repos="https://h2o-release.s3.amazonaws.com/h2o/rel-weierstrass/3/R")
+    if ("h2o" %in% installed.packages() & !"package:h2o" %in% search()){
+      output$h2o_flag <- reactive("1")
+      outputOptions(output, "h2o_flag", suspendWhenHidden = FALSE)
+    } else if(!"h2o" %in% installed.packages()){
+      install.packages("h2o")
+      if ("h2o" %in% installed.packages() & !"package:h2o" %in% search()){
+        output$h2o_flag <- reactive("1")
+        outputOptions(output, "h2o_flag", suspendWhenHidden = FALSE)
+      } 
+    }else if(!"h2o" %in% installed.packages()){
+      showModal(modalDialog(
+        title = "Warning - Installation Failed",
+        HTML(paste("There was a problem to installed H2O.", 
+                   "For further information, please check H2O User Documentation:",
+                   "https://h2o-release.s3.amazonaws.com/h2o/rel-weierstrass/3/index.html",
+                   sep = "<br/>")
+        ), size = "s"
+      ))
+    }
+  })
+  
+  output$h2o_into_ram <- renderUI({
+    sliderInput("max_mem", "Set the Max Memory Size:",
+                min = 1, max = ceiling(get_free_ram() / 1024 ^ 2),
+                value = ceiling(get_free_ram() / 1024 ^ 2))
+  })
+  
+  
+  output$available_memory <- renderValueBox({
+    valueBox(
+      paste(round(get_free_ram() / 1024 ^ 2,2), "GB", sep = ""), "Free Physical Memory", icon = icon("microchip"),
+      color = "purple"
+    )
+  })
+  
+  
+  observeEvent(input$h2o_start, {
+    if(input$h2o_start){
+      h2o.init(nthreads=-1, max_mem_size = paste(input$max_mem, "g", sep = ""))
+      output$h2o_flag <- reactive("3")
+      outputOptions(output, "h2o_flag", suspendWhenHidden = FALSE)
+      h2o_df$status <- h2o.clusterIsUp()
+    }
+  })
+  output$h2o_status <- renderValueBox({
+    valueBox(
+      ifelse(h2o_df$status, "Connect","Not Connect" ), "H2O Status", icon = icon("signal"),
+      color = ifelse(h2o_df$status, "green","red" )
+    )
+  })
+  
+  #need to continue from here
+  # output$h2o_cluster_mem <- renderValueBox({
+  #   valueBox(
+  #     ifelse(h2o_df$status, "Connect","Not Connect" ), "H2O Status", icon = icon("signal"),
+  #     color = ifelse(h2o_df$status, "green","red" )
+  #   )
+  # })
+  
   #------------------------------ Server Function - End -------------------------------------  
 }
-
-
 #------------------------------ UI Function -------------------------------------
 ui <- dashboardPage(
   dashboardHeader(),
   #------------------------------ Side Bar Function -------------------------------------
   dashboardSidebar(
     sidebarMenu(id = "tabs", 
-                menuItem("Data", tabName = "data", icon = icon("dashboard"), startExpanded = TRUE,
+                menuItem("Data", tabName = "data", icon = icon("table"), startExpanded = TRUE,
                          menuSubItem("Data", tabName = "data1"),
                          menuSubItem("Data Prep", tabName = "data2")
                 ),
-                menuItem("Visualization", icon = icon("bar-chart-o"), tabName = "vis")
+                menuItem("Visualization", icon = icon("bar-chart-o"), tabName = "vis"),
+                menuItem("Models", icon = icon("cog"), tabName = "models",
+                         menuSubItem("Classification", tabName = "class")
+                )
     )
   ),
   #------------------------------ Dashboard Body -------------------------------------
@@ -1318,13 +1468,46 @@ ui <- dashboardPage(
                                  )
                                )
               )
-      )
+      ),
       #------------------------------ Tabs Visualization End-------------------------------------
+      #------------------------------ Tabs Classification Start-------------------------------------
+      tabItem(tabName = "class",
+              conditionalPanel(condition =  "output.loaded_table_flag == '1'",
+                               fluidPage(
+                                 fluidRow(
+                                   # conditionalPanel(condition = "output.h2o_flag == '2'",
+                                   infoBoxOutput("available_memory"),
+                                   infoBoxOutput("h2o_status")
+                                   # )
+                                 ),
+                                 fluidRow(
+                                   box(width = 3, title = "Package",
+                                       awesomeCheckboxGroup(inputId = "package", 
+                                                            label = "Packages", 
+                                                            choices = c("H2O", "caret"), selected = NULL, 
+                                                            inline = TRUE),
+                                       conditionalPanel(condition = "output.h2o_flag == '0'",
+                                                        actionButton("install_h2o", "Install H2O")),
+                                       conditionalPanel(condition = "output.h2o_flag == '1'",
+                                                        actionButton("load_h2o", "Load H2O")
+                                       ),
+                                       conditionalPanel(condition = "output.h2o_flag == '2'",
+                                                        uiOutput("h2o_into_ram"),
+                                                        actionButton("h2o_start", "Start Connection")
+                                       )
+                                       
+                                   )
+                                 )
+                               )
+              )
+      )
+      #------------------------------ Tabs Classification End-------------------------------------
       
       
     )
   )
 )
+
 
 #------------------------------ Call the App -------------------------------------
 runApp(list(ui = ui, server = server), launch.browser = TRUE)
