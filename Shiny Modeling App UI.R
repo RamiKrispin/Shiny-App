@@ -1,15 +1,17 @@
-library(shinydashboard)
 #------------------------------ UI Function -------------------------------------
 ui <- dashboardPage(
   dashboardHeader(),
 #------------------------------ Side Bar Function -------------------------------------
   dashboardSidebar(
     sidebarMenu(id = "tabs", 
-      menuItem("Data", tabName = "data", icon = icon("dashboard"), startExpanded = TRUE,
+      menuItem("Data", tabName = "data", icon = icon("table"), startExpanded = TRUE,
                menuSubItem("Data", tabName = "data1"),
                menuSubItem("Data Prep", tabName = "data2")
                ),
-      menuItem("Visualization", icon = icon("bar-chart-o"), tabName = "vis")
+      menuItem("Visualization", icon = icon("bar-chart-o"), tabName = "vis"),
+      menuItem("Models", icon = icon("cog"), tabName = "models",
+               menuSubItem("Regression & Classification", tabName = "models1")
+               )
     )
   ),
 #------------------------------ Dashboard Body -------------------------------------
@@ -176,7 +178,7 @@ tabItem(tabName = "data2",
                                  
                                  
                                  circle = TRUE, status = "danger", icon = icon("gear"), width = "200px",
-                                 tooltip = tooltipOptions(title = "Click to see inputs !")
+                                 tooltip = tooltipOptions(title = "Plot Setting")
                                ),
                                plotlyOutput("data_tab2_ts")
                                
@@ -230,8 +232,84 @@ tabItem(tabName = "vis",
           )
         )
         )
-)
+),
 #------------------------------ Tabs Visualization End-------------------------------------
+#------------------------------ Tabs Classification Start-------------------------------------
+tabItem(tabName = "models1",
+        fluidRow(conditionalPanel(condition = "input.model_package.includes('H2O')",
+                                  infoBoxOutput("h2o_status_box"),
+                                  infoBoxOutput("h2o_cpu"),
+                                  infoBoxOutput("h2o_cluster_mem")  
+                                  )
+        ),
+        fluidRow(
+                           box(width = 2, title = "Model Inputs",
+
+                               conditionalPanel(condition = "input.model_package.includes('H2O')",
+                               uiOutput("models1_df_list"),
+                               conditionalPanel(condition = "output.model_tab_input == '1' || output.model_tab_input == '2'",
+                                                uiOutput("models1_var_list"),
+                                                uiOutput("models1_independent_list")
+                               )
+                               ),
+                               awesomeCheckboxGroup(inputId = "model_package", 
+                                                    label = "Set Packages", 
+                                                    choices = c("H2O"), selected = NULL, 
+                                                    inline = TRUE)
+        
+        ),
+        conditionalPanel(condition = "output.dep_var_class == '1' && output.h2o_flag == '1'",
+        tabBox(
+          title = "Model Setting & Output", width = 10,
+          id = "class_setting", height = "500px",
+         
+          tabPanel("Model Setting",
+                   fluidRow(
+                   box(width = 3, title = "Model Setting",
+                   selectInput("binomial_models", "Select Classification Model",
+                               choices = c("GLMNET (H2O)" = "glmnet",
+                                           "GBM (H2O)" = "gbm",
+                                           "Random Forest (H2O)" = "rf")
+                   ),
+                   materialSwitch(inputId = "h2o_validation", 
+                                  label = "Add Validation Partition", 
+                                  status = "primary", right = FALSE),
+                   conditionalPanel(condition = "input.h2o_validation == true",
+                                    sliderInput("h2o_split_v", "Set the Training/Testing/Validation Partitions:",
+                                                min = 0.05, max = 1,
+                                                value = c(0.6,0.8))),
+                   conditionalPanel(condition = "input.h2o_validation == false",
+                                    sliderInput("h2o_split", "Set the Training/Testing Partitions:",
+                                                min = 0.05, max = 1,
+                                                value = 0.7))
+                   ),
+                   box(width = 3, title = "Model Tuning",
+                   conditionalPanel( condition = "input.binomial_models == 'rf'",
+                                     sliderInput("h2o_rf_ntree", "Number of Trees",
+                                                 min = 25, max = 1000,
+                                                 value = 50),
+                                     sliderInput("h2o_rf_max_depth", "Maximum Tree Depth",
+                                                 min = 1, max = 30,
+                                                 value = 20
+                                     ),
+                                     actionButton("h2o_run_class", "Run Model")
+                                     
+                                    )
+                      )
+                   )
+                   ),
+          
+          tabPanel("Variable Importance", plotlyOutput("var_imp_plot")),
+          tabPanel("RMSE", plotlyOutput("rmse_plot")),
+          tabPanel("Classification Error", plotlyOutput("classification_error_plot")),
+          tabPanel("Logloss", plotlyOutput("logloss_plot"))
+          
+        )
+      )
+    )
+
+)
+#------------------------------ Tabs Classification End-------------------------------------
 
 
 )

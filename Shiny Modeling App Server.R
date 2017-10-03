@@ -2,7 +2,7 @@
 set.seed(1234)
 #Setting the required packages
 pkgs <- c("shiny", "shinydashboard", "shinyWidgets",
-          "plotly","caret",
+          "plotly", "carer",
           "dplyr", "data.table", "lubridate", "reshape2",
           "DT", "knitr", "kableExtra",
           "datasets"
@@ -25,6 +25,19 @@ col_num <- function(df){
     x <- ncol(df)%/%3 +1
   } else {x <- ncol(df)%/%3}
   return (x)
+}
+
+# Checking the available memory (RAM)
+get_free_ram <- function(){
+  if(Sys.info()[["sysname"]] == "Windows"){
+    x <- system2("wmic", args =  "OS get FreePhysicalMemory /Value", stdout = TRUE)
+    x <- x[grepl("FreePhysicalMemory", x)]
+    x <- gsub("FreePhysicalMemory=", "", x, fixed = TRUE)
+    x <- gsub("\r", "", x, fixed = TRUE)
+    as.integer(x)
+  } else {
+    stop("Only supported on Windows OS")
+  }
 }
 #------------------------------ Confusion Matrix Function -------------------------------------
 
@@ -98,6 +111,7 @@ server <- function(input, output,session) {
   input_df <- reactiveValues(counter = 0,
                              data_name = NULL,
                              ts_obj = NULL,
+                             mts_obj = NULL,
                              df_list = NULL,
                              df_class = NULL,
                              names_list = NULL,
@@ -264,7 +278,7 @@ server <- function(input, output,session) {
       selectInput("df_to_load", "Select Data Frame",
                   choices = prev_table$inputs_list )
     } else if(input$data_source == "time_series" ) {
-      selectInput("df_to_load", "Select Data Frame",
+      selectInput("df_to_load", "Select Series",
                   choices = prev_table$inputs_list )
     } else if(input$data_source == "inst_pack" ){
       selectInput("df_to_load", "Select Dataset",
@@ -294,7 +308,12 @@ server <- function(input, output,session) {
       prev_table$df_name <- input$df_to_load
       input_df$ts_obj <- get(input$df_to_load)
       df_view <- get(input$df_to_load)
-      df_view <- data.frame(Y=as.matrix(df_view), date=time(df_view))
+      if(is.mts(df_view)){
+      df_view <- data.frame(date=time(df_view), as.matrix(df_view))
+      } else if(is.ts(df_view)){
+        df_view <- data.frame(date=time(df_view), as.matrix(df_view))
+        names(df_view) <- c("date", prev_table$df_name)
+      }
       if(length(class(input_df$ts_obj)) > 1 & "ts" %in% class(input_df$ts_obj)){
         prev_table$class <- "ts"
       } else if(length(class(input_df$ts_obj)) > 1){
@@ -312,14 +331,18 @@ server <- function(input, output,session) {
       package_name <- substr(input$df_to_load, 
                              1, (regexpr("-", input$df_to_load) - 2)
                              )
-      
-      
-      data(dataset_name, package = package_name)
+      if(!paste("package:", package_name, sep = "") %in% search()){
+        p <- NULL
+        p <- as.list(package_name)
+        do.call("require", p)
+      }
       # Loading the selected dataset
       prev_table$df_name <- dataset_name
       if(!is.na(dataset_name)){
+        if(dataset_name != "NA"){
       df_view <- try(get(dataset_name), silent = TRUE)
-      if(class(df_view) == "try-error" ){
+      if(class(df_view) == "try-error" & !is.na(dataset_name)){
+        
         showModal(modalDialog(
           title = "Warning - Cannot Load the Dataset",
           HTML(paste("Cannot Load the Dataset:",
@@ -330,22 +353,23 @@ server <- function(input, output,session) {
         ))
         output$load_flag <- reactive('0')
         outputOptions(output, "load_flag", suspendWhenHidden = FALSE)
-      }
+          }
+        }
       }
       if(class(df_view) != "try-error"){
         output$load_flag <- reactive('2')
         outputOptions(output, "load_flag", suspendWhenHidden = FALSE)
-      if(is.ts(df_view)){
-        input_df$ts_obj <- df_view
-        df_view <- data.frame(Y=as.matrix(df_view), date=time(df_view))
-        if(length(class(input_df$ts_obj)) > 1 & "ts" %in% class(input_df$ts_obj)){
+      
+        if(is.mts(df_view)){
+          input_df$mts_obj <- df_view
+          df_view <- data.frame(date=time(df_view), as.matrix(df_view))
+          prev_table$class <- "mts"
+        } else if(is.ts(df_view)){
+          input_df$ts_obj <- df_view
+          df_view <- data.frame(date=time(df_view), as.matrix(df_view))
+          names(df_view) <- c("date", prev_table$df_name)
           prev_table$class <- "ts"
-        } else if(length(class(input_df$ts_obj)) > 1){
-          prev_table$class <- class(input_df$ts_obj)[1]
-        } else{
-          prev_table$class <- class(input_df$ts_obj)
-        }
-      } else if(any(class(df_view) %in% c("data.frame","matrix", "data.table", "table"))){
+        } else if(any(class(df_view) %in% c("data.frame","matrix", "data.table", "table"))){
       if(length(class(df_view)) > 1 & "data.frame" %in% class(df_view)){
         prev_table$class <- "data.frame"
         df_view <- as.data.frame(df_view)
@@ -358,24 +382,7 @@ server <- function(input, output,session) {
       }
       
       } 
-      #   else {
-      #   df_view <- NULL
-      #   
-      #   output$package_flag <- reactive('0')
-      #   outputOptions(output, "package_flag", suspendWhenHidden = FALSE)
-      #   showModal(modalDialog(
-      #     title = "Warning - Invalid Format",
-      #     HTML(paste("The dataset format is invalid",
-      #                "the current available formats:",
-      #                "- Data frame",
-      #                "- Data table",
-      #                "- Matrix",
-      #                "- Time series",
-      #                sep = "<br/>")
-      #     ), size = "s"
-      #   ))
-      #   
-      # }
+      
       } 
     } else if(input$data_source == "import" & !is.null(prev_table$file_path)){
       df_view <- NULL
@@ -404,9 +411,10 @@ server <- function(input, output,session) {
     name <- prev_table$df_name
     type <- NULL
     type <- ifelse(prev_table$class == "data.frame", "Data Frame",
-                   ifelse(prev_table$class == "ts", "Time Series", 
+                   ifelse(prev_table$class == "ts", "Time Series",
+                          ifelse(prev_table$class == "mts", "Multiple Time Series",
                           ifelse(prev_table$class == "matrix", "Matrix", 
-                                 prev_table$class )))
+                                 prev_table$class ))))
     
     
     
@@ -1074,6 +1082,428 @@ output$class_df_flag_vis <- reactive({
   ifelse(is.ts(vis_df$df), TRUE, FALSE)
 })
 outputOptions(output, "class_df_flag_vis", suspendWhenHidden = FALSE)  
+
+#------------------------------ Regression and Classification Models ------------------------------------- 
+models_df <- reactiveValues(df = NULL, # Load the selected data frame
+                            var_list = NULL, # Create a variable list
+                            independent_var = NULL, # Create the independent variables list
+                            var_dep_class = NULL # The class of the dependent variable
+)
+
+# Select the dataset
+observeEvent({
+  input$var_modify
+  input_df$names_list
+},{
+  if(length(input_df$names_list[which(input_df$df_class == "Data Frame")]) == 0){
+    output$models1_df_list  <- renderUI({
+      output$model_tab_input <- reactive("0")
+      outputOptions(output, "model_tab_input", suspendWhenHidden = FALSE)
+      models_df$var_list <-  models_df$df <- NULL
+      showModal(modalDialog(
+        title = "Warning - No Available Data Frame",
+        HTML(paste("No available data frame in the platform",
+                   "Use the Data tab to load data", 
+                   sep = "<br/>")
+        ), size = "s"
+      ))
+      output$models1_df_list  <- renderUI({
+        selectInput("models1_select_df", "Select Dataset",
+                    choices = "NA"
+        )
+      })
+    })
+  } else if(length(input_df$names_list[which(input_df$df_class == "Data Frame")]) > 0){
+    output$model_tab_input <- reactive("1")
+    outputOptions(output, "model_tab_input", suspendWhenHidden = FALSE)
+    output$models1_df_list  <- renderUI({ 
+      selectInput("models1_select_df", "Select Dataset",
+                  choices = input_df$names_list[which(input_df$df_class == "Data Frame")]
+      )
+    })
+  }
+})
+
+# Update the dataset selection
+observeEvent({
+  input$var_modify
+  input$models1_select_df
+  
+},{
+  if(length(input_df$names_list[which(input_df$df_class == "Data Frame")]) > 0){
+    output$model_tab_input <- reactive("1")
+    outputOptions(output, "model_tab_input", suspendWhenHidden = FALSE)
+    models_df$df <- input_df$df_list[[which(input_df$names_list == input$models1_select_df)]]
+  } else {
+    output$model_tab_input <- reactive("0")
+    outputOptions(output, "model_tab_input", suspendWhenHidden = FALSE)
+    models_df$df <- NULL
+  }
+})
+
+# Dependent variable
+observeEvent({
+  input$var_modify
+  input$models1_select_df
+  
+}, {
+  if(!is.null(models_df$df)){
+    models_df$var_list <- names(models_df$df)
+    output$model_tab_ind <- reactive("1")
+    outputOptions(output, "model_tab_ind", suspendWhenHidden = FALSE)
+    output$models1_var_list  <- renderUI({
+      selectInput("models1_select_var", "Select the Dependent Variable",
+                  choices = c("Select Variable",models_df$var_list)
+      )
+    })
+  } else if(is.null(models_df$df)){
+    models_df$var_list <- NULL
+    output$model_tab_ind <- reactive("0")
+    outputOptions(output, "model_tab_ind", suspendWhenHidden = FALSE)
+  }
+  
+})
+
+# Independent variable
+observeEvent(input$models1_select_var, {
+  
+  if(input$models1_select_var != "Select Variable"){
+    
+    models_df$var_dep_class <- class(models_df$df[,which(names(models_df$df) == input$models1_select_var)])
+    models_df$independent_var <- setdiff(names(models_df$df), c(input$models1_select_var, "name"))
+    output$model_tab_ind <- reactive("1")
+    outputOptions(output, "model_tab_ind", suspendWhenHidden = FALSE)
+    output$models1_independent_list  <- renderUI({
+      
+      pickerInput(inputId = "models1_independent", 
+                  label = "Select the Independent Variable", 
+                  choices = models_df$independent_var, options = list(`actions-box` = TRUE), 
+                  multiple = TRUE,
+                  selected = models_df$independent_var)
+      
+    })
+  } else if(input$models1_select_var == "Select Variable"){
+    models_df$independent_var <- NULL      
+    models_df$var_dep_class <- NULL
+    output$model_tab_ind <- reactive("0")
+    outputOptions(output, "model_tab_ind", suspendWhenHidden = FALSE)
+  }
+})
+
+
+observeEvent({
+  models_df$var_dep_class
+  input$models1_select_var
+  },{
+    if(!is.null(models_df$var_dep_class)){
+  if(is.factor(models_df$df[,which(names(models_df$df) == input$models1_select_var)])){
+    if(length(levels(models_df$df[,which(names(models_df$df) == input$models1_select_var)])) == 2){
+      output$model_binomial <- reactive("1") # set condition for binomial model
+      outputOptions(output, "model_binomial", suspendWhenHidden = FALSE)
+    } else if(length(levels(models_df$df[,which(names(models_df$df) == input$models1_select_var)])) > 2){
+      output$model_binomial <- reactive("2") # set condition for multinomial model
+      outputOptions(output, "model_binomial", suspendWhenHidden = FALSE)
+    } else {
+      output$model_binomial <- reactive("0") # not engough levels for binomial/multinomial
+      outputOptions(output, "model_binomial", suspendWhenHidden = FALSE)
+    }
+    output$dep_var_class <- reactive("1") # flag for factor variable
+    outputOptions(output, "dep_var_class", suspendWhenHidden = FALSE)
+  } else if (models_df$var_dep_class == "numeric" |
+             models_df$var_dep_class == "integer") {
+    output$dep_var_class <- reactive("2") # flag for numeric/integer variable
+    outputOptions(output, "dep_var_class", suspendWhenHidden = FALSE)
+    # 
+    output$model_binomial <- reactive("0") # reseting the binomial flag
+    outputOptions(output, "model_binomial", suspendWhenHidden = FALSE)
+  }
+    }
+})
+
+#------------------------------ H2O Connection ------------------------------------- 
+h2o_df <- reactiveValues(status = FALSE,
+                         num_cpus = NULL,
+                         free_mem = NULL,
+                         df = NULL,
+                         x = NULL,
+                         y = NULL,
+                         train = NULL,
+                         test = NULL,
+                         valid = NULL,
+                         model = NULL)
+
+
+observeEvent( input$model_package,{
+  if("H2O" %in% input$model_package & !h2o_df$status){
+    if(!"h2o" %in% installed.packages()){
+      
+      showModal(modalDialog(
+        title = "Warning - H2O is not Available",
+        HTML(paste("The H2O package is not installed.", 
+                   "Please install the package to continue.",
+                   "More infromation is available here - https://www.h2o.ai/download/",
+                   sep = "<br/>")
+        ), size = "s"
+      ))
+      output$h2o_flag <- reactive("0")
+      outputOptions(output, "h2o_flag", suspendWhenHidden = FALSE)
+    } else {
+      require(h2o)
+      try(h2o.init(nthreads=-1, 
+                   max_mem_size = paste(ceiling(get_free_ram()/1024^2),"g", sep = "")), 
+                   silent = TRUE)
+      if(h2o.clusterIsUp()){
+        output$h2o_flag <- reactive("1")
+        outputOptions(output, "h2o_flag", suspendWhenHidden = FALSE)
+        h2o_df$status <- TRUE
+        cluster_status <- h2o.clusterStatus()
+        h2o_df$free_mem <- as.numeric(cluster_status$free_mem)
+        h2o_df$num_cpus <- as.numeric(cluster_status$num_cpus)
+      } else {
+        showModal(modalDialog(
+          title = "Warning - H2O is not Connect",
+          HTML(paste("Couldn't connect to H2O cluster,", 
+                     "please check in R if the package installed",
+                     sep = "<br/>")
+          ), size = "s"
+        ))
+        output$h2o_flag <- reactive("0")
+        outputOptions(output, "h2o_flag", suspendWhenHidden = FALSE)
+      }
+      
+    }
+  } else if(!"H2O" %in% input$model_package &  h2o_df$status){
+    try(h2o.shutdown(prompt=FALSE), silent = TRUE)
+    h2o_df$status <- FALSE
+    h2o_df$free_mem <- NULL
+    h2o_df$num_cpus <- NULL
+    output$h2o_flag <- reactive("0")
+    outputOptions(output, "h2o_flag", suspendWhenHidden = FALSE)
+  }
+})
+
+output$h2o_status_box <- renderValueBox({
+  valueBox(
+    ifelse(h2o_df$status, "Connected","Disconnected" ), "H2O Status", icon = icon("signal"),
+    color = ifelse(h2o_df$status, "green","red" )
+  )
+})
+
+output$h2o_cluster_mem <- renderValueBox({
+  valueBox(
+    paste(round((h2o_df$free_mem / 1024^3), 2), "GB", sep = ""), 
+    "H2O Cluster Total Memory", icon = icon("microchip"),
+    color = "maroon"
+  )
+})
+
+output$h2o_cpu <- renderValueBox({
+  valueBox(
+    h2o_df$num_cpus,  
+    "Number of CPUs in Use", icon = icon("microchip"),
+    color = "light-blue"
+  )
+})
+
+observeEvent(input$h2o_run_class, {
+  h2o.removeAll()
+  # Check if there are any ordered factor
+  ordered_factor <- NULL
+  ordered_factor <- which(lapply(models_df$df, is.ordered) == TRUE)
+  if(length(ordered_factor) > 0){
+    if(input$models1_select_var == colnames(models_df$df)[ordered_factor]){
+      showModal(modalDialog(
+        title = "Warning - Ordered Factor",
+        HTML(paste("H2O doesn't support ordered factor class.",
+                   "Please select different dependent variable",
+                   sep = "<br/>")
+        ), size = "s"
+      ))
+    h2o_df$df <- NULL
+    }else if(input$models1_select_var != colnames(models_df$df)[ordered_factor]){
+      showModal(modalDialog(
+        title = "Warning - Ordered Factor",
+        HTML(paste("H2O doesn't support ordered factor class.",
+                   paste("the variable '",
+                         colnames(models_df$df)[ordered_factor],
+                         "' will be exclude", sep = ""),
+                   sep = "<br/>")
+        ), size = "s"
+      ))
+    h2o_df$df <- as.h2o(models_df$df[, -ordered_factor])
+             }} else if(length(ordered_factor) == 0){
+               h2o_df$df <- as.h2o(models_df$df)
+  } 
+  if(!is.null(h2o_df$df)){  
+  h2o_df$y <- h2o_df$x <- h2o_df$model <- NULL
+  h2o_df$train <- h2o_df$test <- h2o_df$valid  <- NULL
+  
+  h2o_df$y <- match(input$models1_select_var, names(h2o_df$df))
+  h2o_df$x <- match(input$models1_independent, names(h2o_df$df))
+  print(names(h2o_df$df))
+  print(h2o_df$y)
+  print(h2o_df$x)
+  if(input$h2o_validation){
+    
+    splits <- h2o.splitFrame(
+      data = h2o_df$df, 
+      ratios = c(input$h2o_split_v[1],(input$h2o_split_v[2] - input$h2o_split_v[1])),   
+      destination_frames = c("train", "valid", "test"), seed = 1234
+    )
+    h2o_df$train <- splits[[1]]
+    h2o_df$valid <- splits[[2]]
+    h2o_df$test  <- splits[[3]]
+    
+    if(input$binomial_models == "rf"){
+      h2o_df$model <- h2o.randomForest(       
+        training_frame = h2o_df$train,        
+        validation_frame = h2o_df$valid,      
+        x = h2o_df$x,                        
+        y = h2o_df$y,                          
+        ntrees = input$h2o_rf_ntree, 
+        max_depth = input$h2o_rf_max_depth
+      )
+      
+      sh <- h2o.scoreHistory(h2o_df$model)
+      
+      # RMSE plot with validation set
+      output$rmse_plot <- renderPlotly({
+        plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_rmse, 
+                type = "scatter", mode = "lines+markers", name = "Training") %>%
+          add_trace(x = ~number_of_trees, y =  ~ validation_rmse, 
+                    type = "scatter", mode = "lines+markers", name = "Validation")%>%
+          layout(
+            title = "Random Forest - RMSE Score History",
+            yaxis = list(title = "RMSE", domain = c(0, 0.95)),
+            xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+          )
+        
+      })
+      
+      # Classification error plot with validation set
+      output$classification_error_plot <- renderPlotly({
+      plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_classification_error, 
+              type = "scatter", mode = "lines+markers", name = "Training") %>%
+        add_trace(x = ~number_of_trees, y =  ~ validation_classification_error, 
+                  type = "scatter", mode = "lines+markers", name = "Validation")%>%
+        layout(
+          title = "Random Forest - Classification Error Score History",
+          yaxis = list(title = "Classification Error", domain = c(0, 0.95)),
+          xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+        )
+      })
+      
+      # Logloss plot with validation set
+      output$logloss_plot <- renderPlotly({
+        plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_logloss, 
+                type = "scatter", mode = "lines+markers", name = "Training") %>%
+          add_trace(x = ~number_of_trees, y =  ~ validation_logloss, 
+                    type = "scatter", mode = "lines+markers", name = "Validation")%>%
+          layout(
+            title = "Random Forest - Logloss Score History",
+            yaxis = list(title = "Classification Error", domain = c(0, 0.95)),
+            xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+          )
+      })
+      
+      # Variable importance plot
+      output$var_imp_plot <- renderPlotly({
+        var_imp <- h2o.varimp(h2o_df$model)
+        var_imp <- var_imp[order(var_imp$scaled_importance),]
+        var_order <- var_imp$variable
+        var_imp$variable <- factor(var_imp$variable, levels = var_order)
+        plot_ly(data = var_imp, y = ~ variable, x = ~ round(scaled_importance,2),
+                type = "bar", orientation = 'h'
+        ) %>% 
+          layout(
+            title = "Random Forest - Variable Importance",
+            yaxis = list(title = ""),
+            xaxis = list(title = "Scaled Importance"),
+            margin = list(l = 155)
+          )
+      })
+      
+    }
+    # If using validation 
+  } else if(!input$h2o_validation){
+    splits <- h2o.splitFrame(
+      data = h2o_df$df, 
+      ratios = c(input$h2o_split),   
+      destination_frames = c("train", "test"), seed = 1234
+    )
+    h2o_df$train <- splits[[1]]
+    h2o_df$test  <- splits[[2]]
+    
+    if(input$binomial_models == "rf"){
+      h2o_df$model <- h2o.randomForest(       
+        training_frame = h2o_df$train,      
+        x = h2o_df$x,                        
+        y = h2o_df$y,                          
+        ntrees = input$h2o_rf_ntree, 
+        max_depth = input$h2o_rf_max_depth
+      )
+      
+      # RMSE plot without validation set
+      output$rmse_plot <- renderPlotly({
+        plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_rmse, 
+                type = "scatter", mode = "lines+markers", name = "Training") %>%
+          layout(
+            title = "Random Forest - RMSE Score History",
+            yaxis = list(title = "RMSE", domain = c(0, 0.95)),
+            xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+          )
+      })
+      
+      
+      # Classification error plor without validation set
+      output$classification_error_plot <- renderPlotly({
+      plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_classification_error, 
+              type = "scatter", mode = "lines+markers", name = "Training") %>%
+        layout(
+          title = "Random Forest - Classification Error Score History",
+          yaxis = list(title = "Classification Error", domain = c(0, 0.95)),
+          xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+        )
+      })
+      
+      # Logloss plot without validation set
+      output$logloss_plot <- renderPlotly({
+      plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_logloss, 
+              type = "scatter", mode = "lines+markers", name = "Training") %>%
+        layout(
+          title = "Random Forest - Logloss Score History",
+          yaxis = list(title = "Classification Error", domain = c(0, 0.95)),
+          xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+        )
+      })
+      
+      # Variable importance plot
+      output$var_imp_plot <- renderPlotly({
+        var_imp <- h2o.varimp(h2o_df$model)
+        var_imp <- var_imp[order(var_imp$scaled_importance),]
+        var_order <- var_imp$variable
+        var_imp$variable <- factor(var_imp$variable, levels = var_order)
+        plot_ly(data = var_imp, y = ~ variable, x = ~ round(scaled_importance,2),
+                type = "bar", orientation = 'h'
+        ) %>% 
+          layout(
+            title = "Random Forest - Variable Importance",
+            yaxis = list(title = ""),
+            xaxis = list(title = "Scaled Importance"),
+            margin = list(l = 155)
+          )
+      })
+      
+      output$h2o_cf 
+      
+    }
+    
+  }
+  }
+})
+
+
+
 #------------------------------ Server Function - End -------------------------------------  
 }
 #------------------------------ Call the App -------------------------------------
