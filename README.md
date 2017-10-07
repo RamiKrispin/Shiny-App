@@ -26,7 +26,7 @@ o	Time series and forecasting with the forecast package
 -	Data manipulation tools – summary tables, sampling etc.
 -	Data visualization – extending the current functionality
 
-Please run the following code to lunch the app into web browser (the app run best on google chrome):
+Please run the following R code to lunch the app into web browser (the app run best on google chrome):
 source("https://raw.githubusercontent.com/RamiKrispin/Shiny-App/master/Shiny%20Modeling%20App%20Server.R")
 
 Please note - the package automatically installed the required packages, however the installation of the H2O package may require some additional Java add-on and it recommended to install it in R before lunching the app. 
