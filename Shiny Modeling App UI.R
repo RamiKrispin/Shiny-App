@@ -267,9 +267,9 @@ tabItem(tabName = "models1",
                    fluidRow(
                    box(width = 3, title = "Model Setting",
                    selectInput("binomial_models", "Select Classification Model",
-                               choices = c("GLMNET (H2O)" = "glmnet",
-                                           "GBM (H2O)" = "gbm",
-                                           "Random Forest (H2O)" = "rf")
+                               choices = c("GLM (H2O)" = "h2o_glm",
+                                           "GBM (H2O)" = "h2o_gbm",
+                                           "Random Forest (H2O)" = "h2o_rf")
                    ),
                    materialSwitch(inputId = "h2o_validation", 
                                   label = "Add Validation Partition", 
@@ -281,21 +281,134 @@ tabItem(tabName = "models1",
                    conditionalPanel(condition = "input.h2o_validation == false",
                                     sliderInput("h2o_split", "Set the Training/Testing Partitions:",
                                                 min = 0.05, max = 1,
-                                                value = 0.7))
+                                                value = 0.7)),
+                   materialSwitch(inputId = "nfolds_flag", 
+                                  label = "N-fold Cross-Validation", 
+                                  status = "primary", right = FALSE),
+                   conditionalPanel(condition = "input.nfolds_flag == true",
+                                    sliderInput("nfolds", "Set the Number of folds:",
+                                                min = 3, max = 10, step = 1,
+                                                value = 5))
                    ),
                    box(width = 3, title = "Model Tuning",
-                   conditionalPanel( condition = "input.binomial_models == 'rf'",
+                   conditionalPanel( condition = "input.binomial_models == 'h2o_rf'",
+                                     dropdownButton(
+                                       tags$h4("More Tunning Parameters"),
+                                       selectInput("rf_histogram_type", "Optimal Split Histogram Type",
+                                                   choices = c("AUTO" = "AUTO",
+                                                               "UniformAdaptive" = "UniformAdaptive",
+                                                               "Random" = "Random",
+                                                               "QuantilesGlobal" = "QuantilesGlobal",
+                                                               "RoundRobin" = "RoundRobin"
+                                                   ),
+                                                   selected = "AUTO"
+                                       ),
+                                       sliderInput("h2o_rf_col_sample_rate_change_per_level", "Column Sample Rate Change Per Level",
+                                                   min = 0, max = 2,
+                                                   value = 1, step = 0.01
+                                       ),
+                                       sliderInput("h2o_rf_col_sample_rate_per_tree", "Column Sample Rate Per Tree",
+                                                   min = 0, max = 1,
+                                                   value = 1, step = 0.01
+                                       ),
+                                       sliderInput("h2o_rf_sample_rate", "Row Sampling Rate",
+                                                   min = 0, max = 1,
+                                                   value = 0.632, step = 0.01
+                                       ),
+                                       circle = TRUE, status = "danger", icon = icon("gear"), width = "300px",
+                                       tooltip = tooltipOptions(title = "More Tunning ")
+                                     ),
                                      sliderInput("h2o_rf_ntree", "Number of Trees",
                                                  min = 25, max = 1000,
-                                                 value = 50),
+                                                 value = 50, step = 25),
                                      sliderInput("h2o_rf_max_depth", "Maximum Tree Depth",
                                                  min = 1, max = 30,
                                                  value = 20
-                                     ),
-                                     actionButton("h2o_run_class", "Run Model")
+                                     )
                                      
-                                    )
-                      )
+                                    ),
+                   conditionalPanel( condition = "input.binomial_models == 'h2o_gbm'",
+                                     dropdownButton(
+                                       tags$h4("More Tunning Parameters"),
+                                       selectInput("gbm_histogram_type", "Optimal Split Histogram Type",
+                                                   choices = c("AUTO" = "AUTO",
+                                                               "UniformAdaptive" = "UniformAdaptive",
+                                                               "Random" = "Random",
+                                                               "QuantilesGlobal" = "QuantilesGlobal",
+                                                               "RoundRobin" = "RoundRobin"
+                                                               ),
+                                                   selected = "AUTO"
+                                       ),
+                                       sliderInput("h2o_gbm_learn_rate", "Learning Rate",
+                                                   min = 0, max = 1,
+                                                   value = 0.1
+                                       ),
+                                       sliderInput("h2o_gbm_learn_rate_annealing", "Learning Rate",
+                                                   min = 0, max = 1,
+                                                   value = 1
+                                       ),
+                                       sliderInput("h2o_gbm_min_rows", "Min. Rows",
+                                                   min = 5, max = 20,
+                                                   value = 1
+                                       ),
+                                       sliderInput("h2o_gbm_min_split_improvement", "Min. Split Improvement",
+                                                   min = 1e-10, max = 1e-3,
+                                                   value = 1e-10
+                                       ),
+                                       circle = TRUE, status = "danger", icon = icon("gear"), width = "300px",
+                                       tooltip = tooltipOptions(title = "More Tunning ")
+                                     ),
+                                     sliderInput("h2o_gbm_ntree", "Number of Trees",
+                                                 min = 25, max = 1000,
+                                                 value = 50, step = 25),
+                                     sliderInput("h2o_gbm_max_depth", "Maximum Tree Depth",
+                                                 min = 1, max = 30,
+                                                 value = 5
+                                     )
+                                     
+                                     
+                                     
+                   ),
+                   
+                   conditionalPanel( condition = "input.binomial_models == 'h2o_glm'",
+                                     dropdownButton(
+                                       tags$h4("More Tunning Parameters"),
+                                       selectInput("glm_solver", "Solver",
+                                                   choices = c("AUTO" = "AUTO",
+                                                               "IRLSM" = "IRLSM",
+                                                               "L_BFGS" = "L_BFGS",
+                                                               "COORDINATE_DESCENT" = "COORDINATE_DESCENT",
+                                                               "COORDINATE_DESCENT_NAIVE" = "COORDINATE_DESCENT_NAIVE"
+                                                   ),
+                                                   selected = "AUTO"
+                                       ),
+                                       sliderInput("h2o_glm_max_iterations", "Solver Max Iterations",
+                                                   min = 10, max = 1000,
+                                                   value = 50, step = 10),
+                                       circle = TRUE, status = "danger", icon = icon("gear"), width = "300px",
+                                       tooltip = tooltipOptions(title = "More Tunning ")
+                                     ),
+                                     sliderInput("h2o_glm_alpha", "Alpha Parameter",
+                                                 min = 0, max = 1,
+                                                 value = 0.5, step = 0.01), 
+                                     materialSwitch(inputId = "h2o_glm_lambda_search", 
+                                                    label = "Lambda Search", 
+                                                    status = "primary", right = FALSE,
+                                                    value = TRUE),
+                                     conditionalPanel(condition = "input.h2o_glm_lambda_search == true",
+                                                      sliderInput("h2o_glm_lambda_min_ratio", "Lambda Min. Ratio",
+                                                                  min = 0.0001, max = 0.001,
+                                                                  value = 0.0001, step = 0.0001), 
+                                                      sliderInput("h2o_glm_nlambdas", "Number of Lambdas",
+                                                                  min = 10, max = 200,
+                                                                  value = 100, step = 1) 
+                                                      )
+                                     
+                   ),
+                   actionButton("h2o_run_class", "Run Model")
+                      ),
+                   box(width = 3, title = "Confusion Matrix",
+                       tableOutput("cm_table"))
                    )
                    ),
           

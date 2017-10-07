@@ -2,7 +2,7 @@
 set.seed(1234)
 #Setting the required packages
 pkgs <- c("shiny", "shinydashboard", "shinyWidgets",
-          "plotly", "carer",
+          "plotly", "caret",
           "dplyr", "data.table", "lubridate", "reshape2",
           "DT", "knitr", "kableExtra",
           "datasets"
@@ -68,6 +68,38 @@ cm_fun <- function(train, test){
   return(table_out)
 }
 
+
+cm_fun_v <- function(train, test, valid){
+  cm_train <- cm_test <- cm_valid <- data.frame(matrix(NA, ncol = dim(train)[1], nrow = dim(train)[2]))
+  for(i in 1:(dim(train)[1])){
+    cm_train[i,] <- train[i,]
+    cm_test[i,] <- test[i,]
+    cm_valid[i,] <- valid[i,]
+  }
+  colnames(cm_train) <- colnames(train)
+  colnames(cm_test) <- colnames(test)
+  colnames(cm_valid) <- colnames(valid)
+  
+  cm_train <- data.frame(rownames(train), cm_train)
+  names(cm_train) <- c("Prediction", colnames(train))
+  cm_valid <- data.frame(rownames(valid), cm_valid)
+  names(cm_valid) <- c("Prediction", colnames(valid))
+  cm_test <- data.frame(rownames(test), cm_test)
+  names(cm_test) <- c("Prediction", colnames(test))
+  cm_df <- rbind(cm_train, cm_valid, cm_test)
+  colnames(cm_df) <- c("Prediction", colnames(train))
+  
+  
+  options(knitr.table.format = "html") 
+  table_out <- knitr::kable(cm_df) %>%
+    kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                  full_width = FALSE) %>%
+    group_rows("Training Set", 1, dim(train)[1]) %>%
+    group_rows("Validation Set", (dim(train)[1] + 1), dim(train)[1] * 2) %>%
+    group_rows("Testing Set", (dim(train)[1] * 2 + 1), dim(train)[1] * 3) %>%
+    add_header_above(c("", "Reference" = dim(train)[1] ))
+  return(table_out)
+}
 #------------------------------ Accuracy Matrix Function -------------------------------------
 
 accuracy_fun <- function(train, test){
@@ -1200,9 +1232,13 @@ observeEvent({
     if(length(levels(models_df$df[,which(names(models_df$df) == input$models1_select_var)])) == 2){
       output$model_binomial <- reactive("1") # set condition for binomial model
       outputOptions(output, "model_binomial", suspendWhenHidden = FALSE)
+      h2o_df$binomial <- NULL
+      h2o_df$binomial <- "binomial"
     } else if(length(levels(models_df$df[,which(names(models_df$df) == input$models1_select_var)])) > 2){
       output$model_binomial <- reactive("2") # set condition for multinomial model
       outputOptions(output, "model_binomial", suspendWhenHidden = FALSE)
+      h2o_df$binomial <- NULL
+      h2o_df$binomial <- "multinomial"
     } else {
       output$model_binomial <- reactive("0") # not engough levels for binomial/multinomial
       outputOptions(output, "model_binomial", suspendWhenHidden = FALSE)
@@ -1230,7 +1266,8 @@ h2o_df <- reactiveValues(status = FALSE,
                          train = NULL,
                          test = NULL,
                          valid = NULL,
-                         model = NULL)
+                         model = NULL,
+                         binomial = NULL)
 
 
 observeEvent( input$model_package,{
@@ -1340,9 +1377,14 @@ observeEvent(input$h2o_run_class, {
   
   h2o_df$y <- match(input$models1_select_var, names(h2o_df$df))
   h2o_df$x <- match(input$models1_independent, names(h2o_df$df))
-  print(names(h2o_df$df))
-  print(h2o_df$y)
-  print(h2o_df$x)
+  
+    n_folds <- NULL
+    if(input$nfolds_flag){
+      n_folds <- input$nfolds
+    } else {
+      n_folds <- 0
+    }
+  
   if(input$h2o_validation){
     
     splits <- h2o.splitFrame(
@@ -1354,17 +1396,44 @@ observeEvent(input$h2o_run_class, {
     h2o_df$valid <- splits[[2]]
     h2o_df$test  <- splits[[3]]
     
-    if(input$binomial_models == "rf"){
+    if(input$binomial_models == "h2o_rf"){
+      # h2o_df$model <- NULL
       h2o_df$model <- h2o.randomForest(       
         training_frame = h2o_df$train,        
         validation_frame = h2o_df$valid,      
         x = h2o_df$x,                        
-        y = h2o_df$y,                          
+        y = h2o_df$y,  
+        nfolds = n_folds,
         ntrees = input$h2o_rf_ntree, 
-        max_depth = input$h2o_rf_max_depth
+        max_depth = input$h2o_rf_max_depth,
+        col_sample_rate_change_per_level = input$h2o_rf_col_sample_rate_change_per_level,
+        col_sample_rate_per_tree = input$h2o_rf_col_sample_rate_per_tree,
+        sample_rate = input$h2o_rf_sample_rate,
+        histogram_type = input$rf_histogram_type
       )
+      # Setting the confusion matrix output
+      train_pred <- as.data.frame(h2o.predict(
+        object = h2o_df$model,
+        newdata = h2o_df$train))
+      train_df <- as.data.frame(h2o_df$train[, h2o_df$y])
+      train_cm <- confusionMatrix(train_pred$predict, train_df[,1])
       
-      sh <- h2o.scoreHistory(h2o_df$model)
+      valid_pred <- as.data.frame(h2o.predict(
+        object = h2o_df$model,
+        newdata = h2o_df$valid))
+      valid_df <- as.data.frame(h2o_df$valid[, h2o_df$y])
+      valid_cm <- confusionMatrix(valid_pred$predict, valid_df[,1])
+      
+      test_pred <- as.data.frame(h2o.predict(
+        object = h2o_df$model,
+        newdata = h2o_df$test))
+      test_df <- as.data.frame(h2o_df$test[, h2o_df$y])
+      test_cm <- confusionMatrix(test_pred$predict, test_df[,1])
+      
+      output$cm_table  <- function(){
+        cm_fun_v(train = train_cm$table, valid = valid_cm$table, test = test_cm$table)
+      }
+      sh <- as.data.frame(h2o.scoreHistory(h2o_df$model))
       
       # RMSE plot with validation set
       output$rmse_plot <- renderPlotly({
@@ -1423,8 +1492,178 @@ observeEvent(input$h2o_run_class, {
           )
       })
       
-    }
-    # If using validation 
+     } else if(input$binomial_models == "h2o_gbm"){
+       # h2o_df$model <- NULL
+       h2o_df$model <- h2o.gbm(       
+        training_frame = h2o_df$train,        
+        validation_frame = h2o_df$valid,      
+        x = h2o_df$x,                        
+        y = h2o_df$y,  
+        nfolds = n_folds,
+        ntrees = input$h2o_gbm_ntree, 
+        max_depth = input$h2o_gbm_max_depth,
+        learn_rate = input$h2o_gbm_learn_rate,
+        learn_rate_annealing = input$h2o_gbm_learn_rate_annealing,
+        min_rows = input$h2o_gbm_min_rows,
+        min_split_improvement = input$h2o_gbm_min_split_improvement,
+        histogram_type = input$gbm_histogram_type
+      )
+      # Setting the confusion matrix output
+      train_pred <- as.data.frame(h2o.predict(
+        object = h2o_df$model,
+        newdata = h2o_df$train))
+      train_df <- as.data.frame(h2o_df$train[, h2o_df$y])
+      train_cm <- confusionMatrix(train_pred$predict, train_df[,1])
+      
+      valid_pred <- as.data.frame(h2o.predict(
+        object = h2o_df$model,
+        newdata = h2o_df$valid))
+      valid_df <- as.data.frame(h2o_df$valid[, h2o_df$y])
+      valid_cm <- confusionMatrix(valid_pred$predict, valid_df[,1])
+      
+      test_pred <- as.data.frame(h2o.predict(
+        object = h2o_df$model,
+        newdata = h2o_df$test))
+      test_df <- as.data.frame(h2o_df$test[, h2o_df$y])
+      test_cm <- confusionMatrix(test_pred$predict, test_df[,1])
+      
+      output$cm_table  <- function(){
+        cm_fun_v(train = train_cm$table, valid = valid_cm$table, test = test_cm$table)
+      }
+      sh <- as.data.frame(h2o.scoreHistory(h2o_df$model))
+      
+      # RMSE plot with validation set
+      output$rmse_plot <- renderPlotly({
+        plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_rmse, 
+                type = "scatter", mode = "lines+markers", name = "Training") %>%
+          add_trace(x = ~number_of_trees, y =  ~ validation_rmse, 
+                    type = "scatter", mode = "lines+markers", name = "Validation")%>%
+          layout(
+            title = "GBM - RMSE Score History",
+            yaxis = list(title = "RMSE", domain = c(0, 0.95)),
+            xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+          )
+        
+      })
+      
+      # Classification error plot with validation set
+      output$classification_error_plot <- renderPlotly({
+        plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_classification_error, 
+                type = "scatter", mode = "lines+markers", name = "Training") %>%
+          add_trace(x = ~number_of_trees, y =  ~ validation_classification_error, 
+                    type = "scatter", mode = "lines+markers", name = "Validation")%>%
+          layout(
+            title = "GBM - Classification Error Score History",
+            yaxis = list(title = "Classification Error", domain = c(0, 0.95)),
+            xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+          )
+      })
+      
+      # Logloss plot with validation set
+      output$logloss_plot <- renderPlotly({
+        plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_logloss, 
+                type = "scatter", mode = "lines+markers", name = "Training") %>%
+          add_trace(x = ~number_of_trees, y =  ~ validation_logloss, 
+                    type = "scatter", mode = "lines+markers", name = "Validation")%>%
+          layout(
+            title = "GBM - Logloss Score History",
+            yaxis = list(title = "Classification Error", domain = c(0, 0.95)),
+            xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+          )
+      })
+      
+      # Variable importance plot
+      output$var_imp_plot <- renderPlotly({
+        var_imp <- h2o.varimp(h2o_df$model)
+        var_imp <- var_imp[order(var_imp$scaled_importance),]
+        var_order <- var_imp$variable
+        var_imp$variable <- factor(var_imp$variable, levels = var_order)
+        plot_ly(data = var_imp, y = ~ variable, x = ~ round(scaled_importance,2),
+                type = "bar", orientation = 'h'
+        ) %>% 
+          layout(
+            title = "GBM - Variable Importance",
+            yaxis = list(title = ""),
+            xaxis = list(title = "Scaled Importance"),
+            margin = list(l = 155)
+          )
+      })
+      
+     } else if(input$binomial_models == "h2o_glm"){
+       
+       if(input$h2o_glm_lambda_search){
+         lambda_search <- TRUE
+         lambda_min_ratio <- input$h2o_glm_lambda_min_ratio
+         nlambdas <- input$h2o_glm_nlambdas
+       } else {
+         lambda_search <- FALSE
+         lambda_min_ratio <- NULL
+         nlambdas <- NULL
+       }
+       
+       
+       h2o_df$model <- h2o.glm(       
+         training_frame = h2o_df$train,        
+         validation_frame = h2o_df$valid,      
+         x = h2o_df$x,                        
+         y = h2o_df$y,  
+         family = h2o_df$binomial,
+         alpha = input$h2o_glm_alpha,
+         solver = input$h2o_glm_solver,
+         max_iterations = input$h2o_glm_max_iterations,
+         lambda_search = lambda_search,
+         lambda_min_ratio = lambda_min_ratio,
+         nlambdas = nlambdas
+        )
+       # Setting the confusion matrix output
+       train_pred <- as.data.frame(h2o.predict(
+         object = h2o_df$model,
+         newdata = h2o_df$train))
+       train_df <- as.data.frame(h2o_df$train[, h2o_df$y])
+       train_cm <- confusionMatrix(train_pred$predict, train_df[,1])
+       
+       valid_pred <- as.data.frame(h2o.predict(
+         object = h2o_df$model,
+         newdata = h2o_df$valid))
+       valid_df <- as.data.frame(h2o_df$valid[, h2o_df$y])
+       valid_cm <- confusionMatrix(valid_pred$predict, valid_df[,1])
+       
+       test_pred <- as.data.frame(h2o.predict(
+         object = h2o_df$model,
+         newdata = h2o_df$test))
+       test_df <- as.data.frame(h2o_df$test[, h2o_df$y])
+       test_cm <- confusionMatrix(test_pred$predict, test_df[,1])
+       
+       output$cm_table  <- function(){
+         cm_fun_v(train = train_cm$table, valid = valid_cm$table, test = test_cm$table)
+       }
+       sh <- as.data.frame(h2o.scoreHistory(h2o_df$model))
+       
+       # RMSE plot with validation set
+       output$rmse_plot <- renderPlotly({
+         NULL
+         
+       })
+       
+       # Classification error plot with validation set
+       output$classification_error_plot <- renderPlotly({
+         NULL
+       })
+       
+       # Logloss plot with validation set
+       output$logloss_plot <- renderPlotly({
+         NULL
+       })
+       
+       # Variable importance plot
+       output$var_imp_plot <- renderPlotly({
+         NULL
+       })
+       
+     }
+    
+    
+    # If not using validation 
   } else if(!input$h2o_validation){
     splits <- h2o.splitFrame(
       data = h2o_df$df, 
@@ -1434,15 +1673,37 @@ observeEvent(input$h2o_run_class, {
     h2o_df$train <- splits[[1]]
     h2o_df$test  <- splits[[2]]
     
-    if(input$binomial_models == "rf"){
+    if(input$binomial_models == "h2o_rf"){
       h2o_df$model <- h2o.randomForest(       
         training_frame = h2o_df$train,      
         x = h2o_df$x,                        
-        y = h2o_df$y,                          
+        y = h2o_df$y,
+        nfolds = n_folds,
         ntrees = input$h2o_rf_ntree, 
-        max_depth = input$h2o_rf_max_depth
+        max_depth = input$h2o_rf_max_depth,
+        histogram_type = input$rf_histogram_type,
+        col_sample_rate_change_per_level = input$h2o_rf_col_sample_rate_change_per_level,
+        col_sample_rate_per_tree = input$h2o_rf_col_sample_rate_per_tree,
+        sample_rate = input$h2o_rf_sample_rate
       )
+
+      sh <- as.data.frame(h2o.scoreHistory(h2o_df$model))
+      # Setting the confusion matrix output
+      train_pred <- as.data.frame(h2o.predict(
+        object = h2o_df$model,
+        newdata = h2o_df$train))
+      train_df <- as.data.frame(h2o_df$train[, h2o_df$y])
+      train_cm <- confusionMatrix(train_pred$predict, train_df[,1])
+      print("2")
+      test_pred <- as.data.frame(h2o.predict(
+        object = h2o_df$model,
+        newdata = h2o_df$test))
+      test_df <- as.data.frame(h2o_df$test[, h2o_df$y])
+      test_cm <- confusionMatrix(test_pred$predict, test_df[,1])
       
+      output$cm_table <- function(){
+        cm_fun(train = train_cm$table, test = test_cm$table)
+      }
       # RMSE plot without validation set
       output$rmse_plot <- renderPlotly({
         plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_rmse, 
@@ -1494,7 +1755,155 @@ observeEvent(input$h2o_run_class, {
           )
       })
       
-      output$h2o_cf 
+       
+      
+    } else if(input$binomial_models == "h2o_gbm"){
+      # h2o_df$model <- NULL
+      h2o_df$model <- h2o.gbm(       
+        training_frame = h2o_df$train,        
+        x = h2o_df$x,                        
+        y = h2o_df$y,  
+        nfolds = n_folds,
+        ntrees = input$h2o_gbm_ntree, 
+        max_depth = input$h2o_gbm_max_depth,
+        learn_rate = input$h2o_gbm_learn_rate,
+        learn_rate_annealing = input$h2o_gbm_learn_rate_annealing,
+        min_rows = input$h2o_gbm_min_rows,
+        min_split_improvement = input$h2o_gbm_min_split_improvement,
+        histogram_type = input$gbm_histogram_type
+      )
+      # Setting the confusion matrix output
+      train_pred <- as.data.frame(h2o.predict(
+        object = h2o_df$model,
+        newdata = h2o_df$train))
+      train_df <- as.data.frame(h2o_df$train[, h2o_df$y])
+      train_cm <- confusionMatrix(train_pred$predict, train_df[,1])
+      
+      test_pred <- as.data.frame(h2o.predict(
+        object = h2o_df$model,
+        newdata = h2o_df$test))
+      test_df <- as.data.frame(h2o_df$test[, h2o_df$y])
+      test_cm <- confusionMatrix(test_pred$predict, test_df[,1])
+      
+      output$cm_table  <- function(){
+        cm_fun(train = train_cm$table, test = test_cm$table)
+      }
+      sh <- as.data.frame(h2o.scoreHistory(h2o_df$model))
+      
+      # RMSE plot with validation set
+      output$rmse_plot <- renderPlotly({
+        plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_rmse, 
+                type = "scatter", mode = "lines+markers", name = "Training") %>%
+          layout(
+            title = "GBM - RMSE Score History",
+            yaxis = list(title = "RMSE", domain = c(0, 0.95)),
+            xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+          )
+        
+      })
+      
+      # Classification error plot with validation set
+      output$classification_error_plot <- renderPlotly({
+        plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_classification_error, 
+                type = "scatter", mode = "lines+markers", name = "Training") %>%
+          layout(
+            title = "GBM - Classification Error Score History",
+            yaxis = list(title = "Classification Error", domain = c(0, 0.95)),
+            xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+          )
+      })
+      
+      # Logloss plot with validation set
+      output$logloss_plot <- renderPlotly({
+        plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_logloss, 
+                type = "scatter", mode = "lines+markers", name = "Training") %>%
+          layout(
+            title = "GBM - Logloss Score History",
+            yaxis = list(title = "Classification Error", domain = c(0, 0.95)),
+            xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+          )
+      })
+      
+      # Variable importance plot
+      output$var_imp_plot <- renderPlotly({
+        var_imp <- h2o.varimp(h2o_df$model)
+        var_imp <- var_imp[order(var_imp$scaled_importance),]
+        var_order <- var_imp$variable
+        var_imp$variable <- factor(var_imp$variable, levels = var_order)
+        plot_ly(data = var_imp, y = ~ variable, x = ~ round(scaled_importance,2),
+                type = "bar", orientation = 'h'
+        ) %>% 
+          layout(
+            title = "GBM - Variable Importance",
+            yaxis = list(title = ""),
+            xaxis = list(title = "Scaled Importance"),
+            margin = list(l = 155)
+          )
+      })
+      
+    } else if(input$binomial_models == "h2o_glm"){
+      
+      if(input$h2o_glm_lambda_search){
+        lambda_search <- TRUE
+        lambda_min_ratio <- input$h2o_glm_lambda_min_ratio
+        nlambdas <- input$h2o_glm_nlambdas
+      } else {
+        lambda_search <- FALSE
+        lambda_min_ratio <- NULL
+        nlambdas <- NULL
+      }
+      
+      
+      h2o_df$model <- h2o.glm(       
+        training_frame = h2o_df$train,   
+        x = h2o_df$x,                        
+        y = h2o_df$y,  
+        family = h2o_df$binomial,
+        alpha = input$h2o_glm_alpha,
+        solver = input$h2o_glm_solver,
+        max_iterations = input$h2o_glm_max_iterations,
+        lambda_search = lambda_search,
+        lambda_min_ratio = lambda_min_ratio,
+        nlambdas = nlambdas
+      )
+      # Setting the confusion matrix output
+      train_pred <- as.data.frame(h2o.predict(
+        object = h2o_df$model,
+        newdata = h2o_df$train))
+      train_df <- as.data.frame(h2o_df$train[, h2o_df$y])
+      train_cm <- confusionMatrix(train_pred$predict, train_df[,1])
+      
+      test_pred <- as.data.frame(h2o.predict(
+        object = h2o_df$model,
+        newdata = h2o_df$test))
+      test_df <- as.data.frame(h2o_df$test[, h2o_df$y])
+      test_cm <- confusionMatrix(test_pred$predict, test_df[,1])
+      
+      output$cm_table  <- function(){
+        cm_fun(train = train_cm$table, test = test_cm$table)
+      }
+      sh <- as.data.frame(h2o.scoreHistory(h2o_df$model))
+      
+      # RMSE plot with validation set
+      output$rmse_plot <- renderPlotly({
+        NULL
+        
+      })
+      
+      # Classification error plot with validation set
+      output$classification_error_plot <- renderPlotly({
+        NULL
+      })
+      
+      # Logloss plot with validation set
+      output$logloss_plot <- renderPlotly({
+        NULL
+      })
+      
+      # Variable importance plot
+      output$var_imp_plot <- renderPlotly({
+        NULL
+      })
       
     }
     
