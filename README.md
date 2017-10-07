@@ -10,6 +10,7 @@ A Shiny platform for ML applications (under construction). Available features:
 
 Features under construction:
 -	Machine learning:
+
 o	Deep learning models
 o	Regression models
 o	The caret training function
