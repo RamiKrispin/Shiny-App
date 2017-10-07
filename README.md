@@ -11,12 +11,18 @@ A Shiny platform for ML applications (under construction). Available features:
 Features under construction:
 -	Machine learning:
 
-o	Deep learning models
+o	Deep learning models with H2O and Keras
+
 o	Regression models
-o	The caret training function
+
+o	The caret training function and models
+
 o	H2O Grid search
+
 o	Unsupervised learning
-o	Time series and forecasting
+
+o	Time series and forecasting 
+
 -	Data manipulation tools – summary tables, sampling etc.
 -	Data visualization – extending the current functionality
 
