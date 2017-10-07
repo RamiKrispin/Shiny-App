@@ -1,2 +1,2 @@
-# Shiny-App
-A shiny interface for ML models, data visualization etc. 
+# ML Studio Package
+A Shiny platform for ML applications (under construction). Available feutures:
