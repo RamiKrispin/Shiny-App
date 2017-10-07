@@ -267,7 +267,8 @@ tabItem(tabName = "models1",
                    fluidRow(
                    box(width = 3, title = "Model Setting",
                    selectInput("binomial_models", "Select Classification Model",
-                               choices = c("GLM (H2O)" = "h2o_glm",
+                               choices = c("Deep Learning (H2O)" = "h2o_dl",
+                                           "GLM (H2O)" = "h2o_glm",
                                            "GBM (H2O)" = "h2o_gbm",
                                            "Random Forest (H2O)" = "h2o_rf")
                    ),
@@ -369,6 +370,88 @@ tabItem(tabName = "models1",
                                      
                                      
                    ),
+                   fluidRow(
+                   conditionalPanel( condition = "input.binomial_models == 'h2o_dl'",
+                                     fluidRow(
+                                     column(width = 2, 
+                                     dropdownButton(
+                                       tags$h4("Layer Setting"),
+                                       sliderInput("h2o_dl_num_hidden", "Number of Hidden Layers",
+                                                   min = 1, max = 4, 
+                                                   value = 2, step = 1
+                                       ),
+                                       conditionalPanel(condition =  "input.h2o_dl_num_hidden == 1",
+                                                        sliderInput("h2o_dl_layer1", "Number of Hidden Layers",
+                                                                    min = 1, max = 1000,
+                                                                    value = 200, step = 1
+                                                        )
+                                                        ),
+                                       conditionalPanel(condition =  "input.h2o_dl_num_hidden == 2",
+                                                        sliderInput("h2o_dl_layer1", "Number of Hidden Layers",
+                                                                    min = 1, max = 1000,
+                                                                    value = 200, step = 1
+                                                        ),
+                                                        sliderInput("h2o_dl_layer2", "Number of Hidden Layers",
+                                                                    min = 1, max = 1000,
+                                                                    value = 200, step = 1
+                                                        )
+                                       ),
+                                       conditionalPanel(condition =  "input.h2o_dl_num_hidden == 3",
+                                                        sliderInput("h2o_dl_layer1", "Number of Hidden Layers",
+                                                                    min = 1, max = 1000,
+                                                                    value = 200, step = 1
+                                                        ),
+                                                        sliderInput("h2o_dl_layer2", "Number of Hidden Layers",
+                                                                    min = 1, max = 1000,
+                                                                    value = 200, step = 1
+                                                        ),
+                                                        sliderInput("h2o_dl_layer3", "Number of Hidden Layers",
+                                                                    min = 1, max = 1000,
+                                                                    value = 200, step = 1
+                                                        )
+                                       ),
+                                       conditionalPanel(condition =  "input.h2o_dl_num_hidden == 4",
+                                                        sliderInput("h2o_dl_layer1", "Number of Hidden Layers",
+                                                                    min = 1, max = 1000,
+                                                                    value = 200, step = 1
+                                                        ),
+                                                        sliderInput("h2o_dl_layer2", "Number of Hidden Layers",
+                                                                    min = 1, max = 1000,
+                                                                    value = 200, step = 1
+                                                        ),
+                                                        sliderInput("h2o_dl_layer3", "Number of Hidden Layers",
+                                                                    min = 1, max = 1000,
+                                                                    value = 200, step = 1
+                                                        ),
+                                                        sliderInput("h2o_dl_layer4", "Number of Hidden Layers",
+                                                                    min = 1, max = 1000,
+                                                                    value = 200, step = 1
+                                                        )
+                                       ),
+                                       
+                                       circle = TRUE, status = "danger", icon = icon("gear"), width = "300px",
+                                       tooltip = tooltipOptions(title = "Layer Setting ")
+                                     )),
+                                     column(width = 2, offset = 2, 
+                                     dropdownButton(
+                                       tags$h4("Layer Setting"),
+                                       circle = TRUE, status = "danger", icon = icon("gear"), width = "300px",
+                                       tooltip = tooltipOptions(title = "Early Stop")
+                                     )))
+                                     ),
+                                     sliderInput("h2o_dl_epochs", "Number of Epochs",
+                                                 min = 1, max = 10000,
+                                                 value = 10, step = 1),
+                                     sliderInput("h2o_dl_l1", "L1 Regularization",
+                                                 min = 0, max = 1,
+                                                 value = 0, step = 1e-5
+                                     ),
+                                     sliderInput("h2o_dl_l2", "L2 Regularization",
+                                                 min = 0, max = 1,
+                                                 value = 0, step = 1e-5
+                                     )
+                                     
+                   ),
                    
                    conditionalPanel( condition = "input.binomial_models == 'h2o_glm'",
                                      dropdownButton(
@@ -411,7 +494,6 @@ tabItem(tabName = "models1",
                        tableOutput("cm_table"))
                    )
                    ),
-          
           tabPanel("Variable Importance", plotlyOutput("var_imp_plot")),
           tabPanel("RMSE", plotlyOutput("rmse_plot")),
           tabPanel("Classification Error", plotlyOutput("classification_error_plot")),

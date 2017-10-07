@@ -2,7 +2,7 @@
 set.seed(1234)
 #Setting the required packages
 pkgs <- c("shiny", "shinydashboard", "shinyWidgets",
-          "plotly",
+          "plotly", "caret",
           "dplyr", "data.table", "lubridate", "reshape2",
           "DT", "knitr", "kableExtra",
           "datasets"
@@ -67,6 +67,38 @@ cm_fun <- function(train, test){
   return(table_out)
 }
 
+
+cm_fun_v <- function(train, test, valid){
+  cm_train <- cm_test <- cm_valid <- data.frame(matrix(NA, ncol = dim(train)[1], nrow = dim(train)[2]))
+  for(i in 1:(dim(train)[1])){
+    cm_train[i,] <- train[i,]
+    cm_test[i,] <- test[i,]
+    cm_valid[i,] <- valid[i,]
+  }
+  colnames(cm_train) <- colnames(train)
+  colnames(cm_test) <- colnames(test)
+  colnames(cm_valid) <- colnames(valid)
+  
+  cm_train <- data.frame(rownames(train), cm_train)
+  names(cm_train) <- c("Prediction", colnames(train))
+  cm_valid <- data.frame(rownames(valid), cm_valid)
+  names(cm_valid) <- c("Prediction", colnames(valid))
+  cm_test <- data.frame(rownames(test), cm_test)
+  names(cm_test) <- c("Prediction", colnames(test))
+  cm_df <- rbind(cm_train, cm_valid, cm_test)
+  colnames(cm_df) <- c("Prediction", colnames(train))
+  
+  
+  options(knitr.table.format = "html") 
+  table_out <- knitr::kable(cm_df) %>%
+    kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                  full_width = FALSE) %>%
+    group_rows("Training Set", 1, dim(train)[1]) %>%
+    group_rows("Validation Set", (dim(train)[1] + 1), dim(train)[1] * 2) %>%
+    group_rows("Testing Set", (dim(train)[1] * 2 + 1), dim(train)[1] * 3) %>%
+    add_header_above(c("", "Reference" = dim(train)[1] ))
+  return(table_out)
+}
 #------------------------------ Accuracy Matrix Function -------------------------------------
 
 accuracy_fun <- function(train, test){
@@ -277,7 +309,7 @@ server <- function(input, output,session) {
       selectInput("df_to_load", "Select Data Frame",
                   choices = prev_table$inputs_list )
     } else if(input$data_source == "time_series" ) {
-      selectInput("df_to_load", "Select Data Frame",
+      selectInput("df_to_load", "Select Series",
                   choices = prev_table$inputs_list )
     } else if(input$data_source == "inst_pack" ){
       selectInput("df_to_load", "Select Dataset",
@@ -381,24 +413,7 @@ server <- function(input, output,session) {
           }
           
         } 
-        #   else {
-        #   df_view <- NULL
-        #   
-        #   output$package_flag <- reactive('0')
-        #   outputOptions(output, "package_flag", suspendWhenHidden = FALSE)
-        #   showModal(modalDialog(
-        #     title = "Warning - Invalid Format",
-        #     HTML(paste("The dataset format is invalid",
-        #                "the current available formats:",
-        #                "- Data frame",
-        #                "- Data table",
-        #                "- Matrix",
-        #                "- Time series",
-        #                sep = "<br/>")
-        #     ), size = "s"
-        #   ))
-        #   
-        # }
+        
       } 
     } else if(input$data_source == "import" & !is.null(prev_table$file_path)){
       df_view <- NULL
@@ -1099,141 +1114,1008 @@ server <- function(input, output,session) {
   })
   outputOptions(output, "class_df_flag_vis", suspendWhenHidden = FALSE)  
   
-  #------------------------------ H2O Functions ------------------------------------- 
+  #------------------------------ Regression and Classification Models ------------------------------------- 
+  models_df <- reactiveValues(df = NULL, # Load the selected data frame
+                              var_list = NULL, # Create a variable list
+                              independent_var = NULL, # Create the independent variables list
+                              var_dep_class = NULL # The class of the dependent variable
+  )
   
-  #------------------------------ input_df - set initial parameters -------------------------------------
+  # Select the dataset
+  observeEvent({
+    input$var_modify
+    input_df$names_list
+  },{
+    if(length(input_df$names_list[which(input_df$df_class == "Data Frame")]) == 0){
+      output$models1_df_list  <- renderUI({
+        output$model_tab_input <- reactive("0")
+        outputOptions(output, "model_tab_input", suspendWhenHidden = FALSE)
+        models_df$var_list <-  models_df$df <- NULL
+        showModal(modalDialog(
+          title = "Warning - No Available Data Frame",
+          HTML(paste("No available data frame in the platform",
+                     "Use the Data tab to load data", 
+                     sep = "<br/>")
+          ), size = "s"
+        ))
+        output$models1_df_list  <- renderUI({
+          selectInput("models1_select_df", "Select Dataset",
+                      choices = "NA"
+          )
+        })
+      })
+    } else if(length(input_df$names_list[which(input_df$df_class == "Data Frame")]) > 0){
+      output$model_tab_input <- reactive("1")
+      outputOptions(output, "model_tab_input", suspendWhenHidden = FALSE)
+      output$models1_df_list  <- renderUI({ 
+        selectInput("models1_select_df", "Select Dataset",
+                    choices = input_df$names_list[which(input_df$df_class == "Data Frame")]
+        )
+      })
+    }
+  })
   
-  h2o_df <- reactiveValues(status = FALSE)
+  # Update the dataset selection
+  observeEvent({
+    input$var_modify
+    input$models1_select_df
+    
+  },{
+    if(length(input_df$names_list[which(input_df$df_class == "Data Frame")]) > 0){
+      output$model_tab_input <- reactive("1")
+      outputOptions(output, "model_tab_input", suspendWhenHidden = FALSE)
+      models_df$df <- input_df$df_list[[which(input_df$names_list == input$models1_select_df)]]
+    } else {
+      output$model_tab_input <- reactive("0")
+      outputOptions(output, "model_tab_input", suspendWhenHidden = FALSE)
+      models_df$df <- NULL
+    }
+  })
   
+  # Dependent variable
+  observeEvent({
+    input$var_modify
+    input$models1_select_df
+    
+  }, {
+    if(!is.null(models_df$df)){
+      models_df$var_list <- names(models_df$df)
+      output$model_tab_ind <- reactive("1")
+      outputOptions(output, "model_tab_ind", suspendWhenHidden = FALSE)
+      output$models1_var_list  <- renderUI({
+        selectInput("models1_select_var", "Select the Dependent Variable",
+                    choices = c("Select Variable",models_df$var_list)
+        )
+      })
+    } else if(is.null(models_df$df)){
+      models_df$var_list <- NULL
+      output$model_tab_ind <- reactive("0")
+      outputOptions(output, "model_tab_ind", suspendWhenHidden = FALSE)
+    }
+    
+  })
   
-  
-  
+  # Independent variable
+  observeEvent(input$models1_select_var, {
+    
+    if(input$models1_select_var != "Select Variable"){
+      
+      models_df$var_dep_class <- class(models_df$df[,which(names(models_df$df) == input$models1_select_var)])
+      models_df$independent_var <- setdiff(names(models_df$df), c(input$models1_select_var, "name"))
+      output$model_tab_ind <- reactive("1")
+      outputOptions(output, "model_tab_ind", suspendWhenHidden = FALSE)
+      output$models1_independent_list  <- renderUI({
+        
+        pickerInput(inputId = "models1_independent", 
+                    label = "Select the Independent Variable", 
+                    choices = models_df$independent_var, options = list(`actions-box` = TRUE), 
+                    multiple = TRUE,
+                    selected = models_df$independent_var)
+        
+      })
+    } else if(input$models1_select_var == "Select Variable"){
+      models_df$independent_var <- NULL      
+      models_df$var_dep_class <- NULL
+      output$model_tab_ind <- reactive("0")
+      outputOptions(output, "model_tab_ind", suspendWhenHidden = FALSE)
+    }
+  })
   
   
   observeEvent({
-    input$package
-    
+    models_df$var_dep_class
+    input$models1_select_var
   },{
-    if("H2O" %in% input$package){
+    if(!is.null(models_df$var_dep_class)){
+      if(is.factor(models_df$df[,which(names(models_df$df) == input$models1_select_var)])){
+        if(length(levels(models_df$df[,which(names(models_df$df) == input$models1_select_var)])) == 2){
+          output$model_binomial <- reactive("1") # set condition for binomial model
+          outputOptions(output, "model_binomial", suspendWhenHidden = FALSE)
+          h2o_df$binomial <- NULL
+          h2o_df$binomial <- "binomial"
+        } else if(length(levels(models_df$df[,which(names(models_df$df) == input$models1_select_var)])) > 2){
+          output$model_binomial <- reactive("2") # set condition for multinomial model
+          outputOptions(output, "model_binomial", suspendWhenHidden = FALSE)
+          h2o_df$binomial <- NULL
+          h2o_df$binomial <- "multinomial"
+        } else {
+          output$model_binomial <- reactive("0") # not engough levels for binomial/multinomial
+          outputOptions(output, "model_binomial", suspendWhenHidden = FALSE)
+        }
+        output$dep_var_class <- reactive("1") # flag for factor variable
+        outputOptions(output, "dep_var_class", suspendWhenHidden = FALSE)
+      } else if (models_df$var_dep_class == "numeric" |
+                 models_df$var_dep_class == "integer") {
+        output$dep_var_class <- reactive("2") # flag for numeric/integer variable
+        outputOptions(output, "dep_var_class", suspendWhenHidden = FALSE)
+        # 
+        output$model_binomial <- reactive("0") # reseting the binomial flag
+        outputOptions(output, "model_binomial", suspendWhenHidden = FALSE)
+      }
+    }
+  })
+  
+  #------------------------------ H2O Connection ------------------------------------- 
+  h2o_df <- reactiveValues(status = FALSE,
+                           num_cpus = NULL,
+                           free_mem = NULL,
+                           df = NULL,
+                           x = NULL,
+                           y = NULL,
+                           train = NULL,
+                           test = NULL,
+                           valid = NULL,
+                           model = NULL,
+                           binomial = NULL)
+  
+  
+  observeEvent( input$model_package,{
+    if("H2O" %in% input$model_package & !h2o_df$status){
       if(!"h2o" %in% installed.packages()){
         
         showModal(modalDialog(
           title = "Warning - H2O is not Available",
           HTML(paste("The H2O package is not installed.", 
-                     "Please install the package to continue.", 
+                     "Please install the package to continue.",
+                     "More infromation is available here - https://www.h2o.ai/download/",
                      sep = "<br/>")
           ), size = "s"
         ))
         output$h2o_flag <- reactive("0")
         outputOptions(output, "h2o_flag", suspendWhenHidden = FALSE)
-      } else if("h2o" %in% installed.packages() & !"package:h2o" %in% search()){
-        output$h2o_flag <- reactive("1")
-        print("Need to Load")
-        outputOptions(output, "h2o_flag", suspendWhenHidden = FALSE)
-      } else if("h2o" %in% installed.packages() & "package:h2o" %in% search()){
-        output$h2o_flag <- reactive("2")
-        outputOptions(output, "h2o_flag", suspendWhenHidden = FALSE)
-        print("No Need to Load")
+      } else {
+        require(h2o)
+        try(h2o.init(nthreads=-1, 
+                     max_mem_size = paste(ceiling(get_free_ram()/1024^2),"g", sep = "")), 
+            silent = TRUE)
+        if(h2o.clusterIsUp()){
+          output$h2o_flag <- reactive("1")
+          outputOptions(output, "h2o_flag", suspendWhenHidden = FALSE)
+          h2o_df$status <- TRUE
+          cluster_status <- h2o.clusterStatus()
+          h2o_df$free_mem <- as.numeric(cluster_status$free_mem)
+          h2o_df$num_cpus <- as.numeric(cluster_status$num_cpus)
+        } else {
+          showModal(modalDialog(
+            title = "Warning - H2O is not Connect",
+            HTML(paste("Couldn't connect to H2O cluster,", 
+                       "please check in R if the package installed",
+                       sep = "<br/>")
+            ), size = "s"
+          ))
+          output$h2o_flag <- reactive("0")
+          outputOptions(output, "h2o_flag", suspendWhenHidden = FALSE)
+        }
+        
       }
-    } else {
-      print("YYY")
-    }
-  })
-  
-  # Load H2O
-  observeEvent(input$load_h2o,{
-    require(h2o)
-    if ("h2o" %in% installed.packages() & "package:h2o" %in% search()){
-      output$h2o_flag <- reactive("2")
+    } else if(!"H2O" %in% input$model_package &  h2o_df$status){
+      try(h2o.shutdown(prompt=FALSE), silent = TRUE)
+      h2o_df$status <- FALSE
+      h2o_df$free_mem <- NULL
+      h2o_df$num_cpus <- NULL
+      output$h2o_flag <- reactive("0")
       outputOptions(output, "h2o_flag", suspendWhenHidden = FALSE)
-      
-    } else if("h2o" %in% installed.packages() & !"package:h2o" %in% search()){
-      showModal(modalDialog(
-        title = "Warning - Failed to Load H2O",
-        HTML(paste("Could not load H2O, please check if the package was installed currectly", 
-                   "For further information, please check H2O User Documentation:",
-                   "https://h2o-release.s3.amazonaws.com/h2o/rel-weierstrass/3/index.html",
-                   sep = "<br/>")
-        ), size = "s"
-      ))
     }
   })
   
-  # Install H2O
-  observeEvent(input$install_h2o,{
-    # The following two commands remove any previously installed H2O packages for R.
-    if ("package:h2o" %in% search()) { detach("package:h2o", unload=TRUE) }
-    if ("h2o" %in% rownames(installed.packages())) { remove.packages("h2o") }
-    
-    # Next, we download packages that H2O depends on.
-    pkgs <- c("statmod","RCurl","jsonlite")
-    for (pkg in pkgs) {
-      if (! (pkg %in% rownames(installed.packages()))) { install.packages(pkg) }
-    }
-    
-    # Now we download, install and initialize the H2O package for R.
-    install.packages("h2o", type="source", repos="https://h2o-release.s3.amazonaws.com/h2o/rel-weierstrass/3/R")
-    if ("h2o" %in% installed.packages() & !"package:h2o" %in% search()){
-      output$h2o_flag <- reactive("1")
-      outputOptions(output, "h2o_flag", suspendWhenHidden = FALSE)
-    } else if(!"h2o" %in% installed.packages()){
-      install.packages("h2o")
-      if ("h2o" %in% installed.packages() & !"package:h2o" %in% search()){
-        output$h2o_flag <- reactive("1")
-        outputOptions(output, "h2o_flag", suspendWhenHidden = FALSE)
-      } 
-    }else if(!"h2o" %in% installed.packages()){
-      showModal(modalDialog(
-        title = "Warning - Installation Failed",
-        HTML(paste("There was a problem to installed H2O.", 
-                   "For further information, please check H2O User Documentation:",
-                   "https://h2o-release.s3.amazonaws.com/h2o/rel-weierstrass/3/index.html",
-                   sep = "<br/>")
-        ), size = "s"
-      ))
-    }
-  })
-  
-  output$h2o_into_ram <- renderUI({
-    sliderInput("max_mem", "Set the Max Memory Size:",
-                min = 1, max = ceiling(get_free_ram() / 1024 ^ 2),
-                value = ceiling(get_free_ram() / 1024 ^ 2))
-  })
-  
-  
-  output$available_memory <- renderValueBox({
+  output$h2o_status_box <- renderValueBox({
     valueBox(
-      paste(round(get_free_ram() / 1024 ^ 2,2), "GB", sep = ""), "Free Physical Memory", icon = icon("microchip"),
-      color = "purple"
-    )
-  })
-  
-  
-  observeEvent(input$h2o_start, {
-    if(input$h2o_start){
-      h2o.init(nthreads=-1, max_mem_size = paste(input$max_mem, "g", sep = ""))
-      output$h2o_flag <- reactive("3")
-      outputOptions(output, "h2o_flag", suspendWhenHidden = FALSE)
-      h2o_df$status <- h2o.clusterIsUp()
-    }
-  })
-  output$h2o_status <- renderValueBox({
-    valueBox(
-      ifelse(h2o_df$status, "Connect","Not Connect" ), "H2O Status", icon = icon("signal"),
+      ifelse(h2o_df$status, "Connected","Disconnected" ), "H2O Status", icon = icon("signal"),
       color = ifelse(h2o_df$status, "green","red" )
     )
   })
   
-  #need to continue from here
-  # output$h2o_cluster_mem <- renderValueBox({
-  #   valueBox(
-  #     ifelse(h2o_df$status, "Connect","Not Connect" ), "H2O Status", icon = icon("signal"),
-  #     color = ifelse(h2o_df$status, "green","red" )
-  #   )
-  # })
+  output$h2o_cluster_mem <- renderValueBox({
+    valueBox(
+      paste(round((h2o_df$free_mem / 1024^3), 2), "GB", sep = ""), 
+      "H2O Cluster Total Memory", icon = icon("microchip"),
+      color = "maroon"
+    )
+  })
+  
+  output$h2o_cpu <- renderValueBox({
+    valueBox(
+      h2o_df$num_cpus,  
+      "Number of CPUs in Use", icon = icon("microchip"),
+      color = "light-blue"
+    )
+  })
+  
+  observeEvent(input$h2o_run_class, {
+    h2o.removeAll()
+    # Check if there are any ordered factor
+    ordered_factor <- NULL
+    ordered_factor <- which(lapply(models_df$df, is.ordered) == TRUE)
+    if(length(ordered_factor) > 0){
+      if(input$models1_select_var == colnames(models_df$df)[ordered_factor]){
+        showModal(modalDialog(
+          title = "Warning - Ordered Factor",
+          HTML(paste("H2O doesn't support ordered factor class.",
+                     "Please select different dependent variable",
+                     sep = "<br/>")
+          ), size = "s"
+        ))
+        h2o_df$df <- NULL
+      }else if(input$models1_select_var != colnames(models_df$df)[ordered_factor]){
+        showModal(modalDialog(
+          title = "Warning - Ordered Factor",
+          HTML(paste("H2O doesn't support ordered factor class.",
+                     paste("the variable '",
+                           colnames(models_df$df)[ordered_factor],
+                           "' will be exclude", sep = ""),
+                     sep = "<br/>")
+          ), size = "s"
+        ))
+        h2o_df$df <- as.h2o(models_df$df[, -ordered_factor])
+      }} else if(length(ordered_factor) == 0){
+        h2o_df$df <- as.h2o(models_df$df)
+      } 
+    if(!is.null(h2o_df$df)){  
+      h2o_df$y <- h2o_df$x <- h2o_df$model <- NULL
+      h2o_df$train <- h2o_df$test <- h2o_df$valid  <- NULL
+      
+      h2o_df$y <- match(input$models1_select_var, names(h2o_df$df))
+      h2o_df$x <- match(input$models1_independent, names(h2o_df$df))
+      
+      n_folds <- NULL
+      if(input$nfolds_flag){
+        n_folds <- input$nfolds
+      } else {
+        n_folds <- 0
+      }
+      
+      if(input$h2o_validation){
+        
+        splits <- h2o.splitFrame(
+          data = h2o_df$df, 
+          ratios = c(input$h2o_split_v[1],(input$h2o_split_v[2] - input$h2o_split_v[1])),   
+          destination_frames = c("train", "valid", "test"), seed = 1234
+        )
+        h2o_df$train <- splits[[1]]
+        h2o_df$valid <- splits[[2]]
+        h2o_df$test  <- splits[[3]]
+        
+        if(input$binomial_models == "h2o_rf"){
+          # h2o_df$model <- NULL
+          h2o_df$model <- h2o.randomForest(       
+            training_frame = h2o_df$train,        
+            validation_frame = h2o_df$valid,      
+            x = h2o_df$x,                        
+            y = h2o_df$y,  
+            nfolds = n_folds,
+            ntrees = input$h2o_rf_ntree, 
+            max_depth = input$h2o_rf_max_depth,
+            col_sample_rate_change_per_level = input$h2o_rf_col_sample_rate_change_per_level,
+            col_sample_rate_per_tree = input$h2o_rf_col_sample_rate_per_tree,
+            sample_rate = input$h2o_rf_sample_rate,
+            histogram_type = input$rf_histogram_type
+          )
+          # Setting the confusion matrix output
+          train_pred <- as.data.frame(h2o.predict(
+            object = h2o_df$model,
+            newdata = h2o_df$train))
+          train_df <- as.data.frame(h2o_df$train[, h2o_df$y])
+          train_cm <- confusionMatrix(train_pred$predict, train_df[,1])
+          
+          valid_pred <- as.data.frame(h2o.predict(
+            object = h2o_df$model,
+            newdata = h2o_df$valid))
+          valid_df <- as.data.frame(h2o_df$valid[, h2o_df$y])
+          valid_cm <- confusionMatrix(valid_pred$predict, valid_df[,1])
+          
+          test_pred <- as.data.frame(h2o.predict(
+            object = h2o_df$model,
+            newdata = h2o_df$test))
+          test_df <- as.data.frame(h2o_df$test[, h2o_df$y])
+          test_cm <- confusionMatrix(test_pred$predict, test_df[,1])
+          
+          output$cm_table  <- function(){
+            cm_fun_v(train = train_cm$table, valid = valid_cm$table, test = test_cm$table)
+          }
+          sh <- as.data.frame(h2o.scoreHistory(h2o_df$model))
+          
+          # RMSE plot with validation set
+          output$rmse_plot <- renderPlotly({
+            plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_rmse, 
+                    type = "scatter", mode = "lines+markers", name = "Training") %>%
+              add_trace(x = ~number_of_trees, y =  ~ validation_rmse, 
+                        type = "scatter", mode = "lines+markers", name = "Validation")%>%
+              layout(
+                title = "Random Forest - RMSE Score History",
+                yaxis = list(title = "RMSE", domain = c(0, 0.95)),
+                xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+              )
+            
+          })
+          
+          # Classification error plot with validation set
+          output$classification_error_plot <- renderPlotly({
+            plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_classification_error, 
+                    type = "scatter", mode = "lines+markers", name = "Training") %>%
+              add_trace(x = ~number_of_trees, y =  ~ validation_classification_error, 
+                        type = "scatter", mode = "lines+markers", name = "Validation")%>%
+              layout(
+                title = "Random Forest - Classification Error Score History",
+                yaxis = list(title = "Classification Error", domain = c(0, 0.95)),
+                xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+              )
+          })
+          
+          # Logloss plot with validation set
+          output$logloss_plot <- renderPlotly({
+            plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_logloss, 
+                    type = "scatter", mode = "lines+markers", name = "Training") %>%
+              add_trace(x = ~number_of_trees, y =  ~ validation_logloss, 
+                        type = "scatter", mode = "lines+markers", name = "Validation")%>%
+              layout(
+                title = "Random Forest - Logloss Score History",
+                yaxis = list(title = "Classification Error", domain = c(0, 0.95)),
+                xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+              )
+          })
+          
+          # Variable importance plot
+          output$var_imp_plot <- renderPlotly({
+            var_imp <- h2o.varimp(h2o_df$model)
+            var_imp <- var_imp[order(var_imp$scaled_importance),]
+            var_order <- var_imp$variable
+            var_imp$variable <- factor(var_imp$variable, levels = var_order)
+            plot_ly(data = var_imp, y = ~ variable, x = ~ round(scaled_importance,2),
+                    type = "bar", orientation = 'h'
+            ) %>% 
+              layout(
+                title = "Random Forest - Variable Importance",
+                yaxis = list(title = ""),
+                xaxis = list(title = "Scaled Importance"),
+                margin = list(l = 155)
+              )
+          })
+          
+        } else if(input$binomial_models == "h2o_gbm"){
+          # h2o_df$model <- NULL
+          h2o_df$model <- h2o.gbm(       
+            training_frame = h2o_df$train,        
+            validation_frame = h2o_df$valid,      
+            x = h2o_df$x,                        
+            y = h2o_df$y,  
+            nfolds = n_folds,
+            ntrees = input$h2o_gbm_ntree, 
+            max_depth = input$h2o_gbm_max_depth,
+            learn_rate = input$h2o_gbm_learn_rate,
+            learn_rate_annealing = input$h2o_gbm_learn_rate_annealing,
+            min_rows = input$h2o_gbm_min_rows,
+            min_split_improvement = input$h2o_gbm_min_split_improvement,
+            histogram_type = input$gbm_histogram_type
+          )
+          # Setting the confusion matrix output
+          train_pred <- as.data.frame(h2o.predict(
+            object = h2o_df$model,
+            newdata = h2o_df$train))
+          train_df <- as.data.frame(h2o_df$train[, h2o_df$y])
+          train_cm <- confusionMatrix(train_pred$predict, train_df[,1])
+          
+          valid_pred <- as.data.frame(h2o.predict(
+            object = h2o_df$model,
+            newdata = h2o_df$valid))
+          valid_df <- as.data.frame(h2o_df$valid[, h2o_df$y])
+          valid_cm <- confusionMatrix(valid_pred$predict, valid_df[,1])
+          
+          test_pred <- as.data.frame(h2o.predict(
+            object = h2o_df$model,
+            newdata = h2o_df$test))
+          test_df <- as.data.frame(h2o_df$test[, h2o_df$y])
+          test_cm <- confusionMatrix(test_pred$predict, test_df[,1])
+          
+          output$cm_table  <- function(){
+            cm_fun_v(train = train_cm$table, valid = valid_cm$table, test = test_cm$table)
+          }
+          sh <- as.data.frame(h2o.scoreHistory(h2o_df$model))
+          
+          # RMSE plot with validation set
+          output$rmse_plot <- renderPlotly({
+            plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_rmse, 
+                    type = "scatter", mode = "lines+markers", name = "Training") %>%
+              add_trace(x = ~number_of_trees, y =  ~ validation_rmse, 
+                        type = "scatter", mode = "lines+markers", name = "Validation")%>%
+              layout(
+                title = "GBM - RMSE Score History",
+                yaxis = list(title = "RMSE", domain = c(0, 0.95)),
+                xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+              )
+            
+          })
+          
+          # Classification error plot with validation set
+          output$classification_error_plot <- renderPlotly({
+            plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_classification_error, 
+                    type = "scatter", mode = "lines+markers", name = "Training") %>%
+              add_trace(x = ~number_of_trees, y =  ~ validation_classification_error, 
+                        type = "scatter", mode = "lines+markers", name = "Validation")%>%
+              layout(
+                title = "GBM - Classification Error Score History",
+                yaxis = list(title = "Classification Error", domain = c(0, 0.95)),
+                xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+              )
+          })
+          
+          # Logloss plot with validation set
+          output$logloss_plot <- renderPlotly({
+            plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_logloss, 
+                    type = "scatter", mode = "lines+markers", name = "Training") %>%
+              add_trace(x = ~number_of_trees, y =  ~ validation_logloss, 
+                        type = "scatter", mode = "lines+markers", name = "Validation")%>%
+              layout(
+                title = "GBM - Logloss Score History",
+                yaxis = list(title = "Classification Error", domain = c(0, 0.95)),
+                xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+              )
+          })
+          
+          # Variable importance plot
+          output$var_imp_plot <- renderPlotly({
+            var_imp <- h2o.varimp(h2o_df$model)
+            var_imp <- var_imp[order(var_imp$scaled_importance),]
+            var_order <- var_imp$variable
+            var_imp$variable <- factor(var_imp$variable, levels = var_order)
+            plot_ly(data = var_imp, y = ~ variable, x = ~ round(scaled_importance,2),
+                    type = "bar", orientation = 'h'
+            ) %>% 
+              layout(
+                title = "GBM - Variable Importance",
+                yaxis = list(title = ""),
+                xaxis = list(title = "Scaled Importance"),
+                margin = list(l = 155)
+              )
+          })
+          
+        } else if(input$binomial_models == "h2o_dl"){
+          # h2o_df$model <- NULL
+          
+          if(input$h2o_dl_num_hidden == 1){
+            hidden <- c(input$h2o_dl_layer1)
+          } else if(input$h2o_dl_num_hidden == 2){
+            hidden <- c(input$h2o_dl_layer1, input$h2o_dl_layer2)
+          } else if(input$h2o_dl_num_hidden == 3){
+            hidden <- c(input$h2o_dl_layer1, input$h2o_dl_layer2, input$h2o_dl_layer3)
+          } else if(input$h2o_dl_num_hidden == 4){
+            hidden <- c(input$h2o_dl_layer1, input$h2o_dl_layer2, input$h2o_dl_layer3, input$h2o_dl_layer4)
+          }
+          h2o_df$model <- h2o.deeplearning(       
+            training_frame = h2o_df$train,        
+            validation_frame = h2o_df$valid,      
+            x = h2o_df$x,                        
+            y = h2o_df$y,  
+            nfolds = n_folds,
+            hidden = hidden, 
+            epochs = input$h2o_dl_epochs,
+            l1 = input$h2o_dl_l1,
+            l2 = input$h2o_dl_l2
+          )
+          # Setting the confusion matrix output
+          train_pred <- as.data.frame(h2o.predict(
+            object = h2o_df$model,
+            newdata = h2o_df$train))
+          train_df <- as.data.frame(h2o_df$train[, h2o_df$y])
+          train_cm <- confusionMatrix(train_pred$predict, train_df[,1])
+          
+          valid_pred <- as.data.frame(h2o.predict(
+            object = h2o_df$model,
+            newdata = h2o_df$valid))
+          valid_df <- as.data.frame(h2o_df$valid[, h2o_df$y])
+          valid_cm <- confusionMatrix(valid_pred$predict, valid_df[,1])
+          
+          test_pred <- as.data.frame(h2o.predict(
+            object = h2o_df$model,
+            newdata = h2o_df$test))
+          test_df <- as.data.frame(h2o_df$test[, h2o_df$y])
+          test_cm <- confusionMatrix(test_pred$predict, test_df[,1])
+          
+          output$cm_table  <- function(){
+            cm_fun_v(train = train_cm$table, valid = valid_cm$table, test = test_cm$table)
+          }
+          sh <- as.data.frame(h2o.scoreHistory(h2o_df$model))
+          
+          # RMSE plot with validation set
+          output$rmse_plot <- renderPlotly({
+            # plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_rmse, 
+            #         type = "scatter", mode = "lines+markers", name = "Training") %>%
+            #   add_trace(x = ~number_of_trees, y =  ~ validation_rmse, 
+            #             type = "scatter", mode = "lines+markers", name = "Validation")%>%
+            #   layout(
+            #     title = "GBM - RMSE Score History",
+            #     yaxis = list(title = "RMSE", domain = c(0, 0.95)),
+            #     xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+            #   )
+            
+          })
+          
+          # Classification error plot with validation set
+          output$classification_error_plot <- renderPlotly({
+            # plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_classification_error, 
+            #         type = "scatter", mode = "lines+markers", name = "Training") %>%
+            #   add_trace(x = ~number_of_trees, y =  ~ validation_classification_error, 
+            #             type = "scatter", mode = "lines+markers", name = "Validation")%>%
+            #   layout(
+            #     title = "GBM - Classification Error Score History",
+            #     yaxis = list(title = "Classification Error", domain = c(0, 0.95)),
+            #     xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+            #   )
+          })
+          
+          # Logloss plot with validation set
+          output$logloss_plot <- renderPlotly({
+            # plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_logloss, 
+            #         type = "scatter", mode = "lines+markers", name = "Training") %>%
+            #   add_trace(x = ~number_of_trees, y =  ~ validation_logloss, 
+            #             type = "scatter", mode = "lines+markers", name = "Validation")%>%
+            #   layout(
+            #     title = "GBM - Logloss Score History",
+            #     yaxis = list(title = "Classification Error", domain = c(0, 0.95)),
+            #     xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+            #   )
+          })
+          
+          # Variable importance plot
+          output$var_imp_plot <- renderPlotly({
+            var_imp <- h2o.varimp(h2o_df$model)
+            var_imp <- var_imp[order(var_imp$scaled_importance),]
+            var_order <- var_imp$variable
+            var_imp$variable <- factor(var_imp$variable, levels = var_order)
+            plot_ly(data = var_imp, y = ~ variable, x = ~ round(scaled_importance,2),
+                    type = "bar", orientation = 'h'
+            ) %>% 
+              layout(
+                title = "Deep Learning - Variable Importance",
+                yaxis = list(title = ""),
+                xaxis = list(title = "Scaled Importance"),
+                margin = list(l = 155)
+              )
+          })
+          
+        } else if(input$binomial_models == "h2o_glm"){
+          
+          if(input$h2o_glm_lambda_search){
+            lambda_search <- TRUE
+            lambda_min_ratio <- input$h2o_glm_lambda_min_ratio
+            nlambdas <- input$h2o_glm_nlambdas
+          } else {
+            lambda_search <- FALSE
+            lambda_min_ratio <- NULL
+            nlambdas <- NULL
+          }
+          
+          
+          h2o_df$model <- h2o.glm(       
+            training_frame = h2o_df$train,        
+            validation_frame = h2o_df$valid,      
+            x = h2o_df$x,                        
+            y = h2o_df$y,  
+            family = h2o_df$binomial,
+            alpha = input$h2o_glm_alpha,
+            solver = input$h2o_glm_solver,
+            max_iterations = input$h2o_glm_max_iterations,
+            lambda_search = lambda_search,
+            lambda_min_ratio = lambda_min_ratio,
+            nlambdas = nlambdas
+          )
+          # Setting the confusion matrix output
+          train_pred <- as.data.frame(h2o.predict(
+            object = h2o_df$model,
+            newdata = h2o_df$train))
+          train_df <- as.data.frame(h2o_df$train[, h2o_df$y])
+          train_cm <- confusionMatrix(train_pred$predict, train_df[,1])
+          
+          valid_pred <- as.data.frame(h2o.predict(
+            object = h2o_df$model,
+            newdata = h2o_df$valid))
+          valid_df <- as.data.frame(h2o_df$valid[, h2o_df$y])
+          valid_cm <- confusionMatrix(valid_pred$predict, valid_df[,1])
+          
+          test_pred <- as.data.frame(h2o.predict(
+            object = h2o_df$model,
+            newdata = h2o_df$test))
+          test_df <- as.data.frame(h2o_df$test[, h2o_df$y])
+          test_cm <- confusionMatrix(test_pred$predict, test_df[,1])
+          
+          output$cm_table  <- function(){
+            cm_fun_v(train = train_cm$table, valid = valid_cm$table, test = test_cm$table)
+          }
+          sh <- as.data.frame(h2o.scoreHistory(h2o_df$model))
+          
+          # RMSE plot with validation set
+          output$rmse_plot <- renderPlotly({
+            NULL
+            
+          })
+          
+          # Classification error plot with validation set
+          output$classification_error_plot <- renderPlotly({
+            NULL
+          })
+          
+          # Logloss plot with validation set
+          output$logloss_plot <- renderPlotly({
+            NULL
+          })
+          
+          # Variable importance plot
+          output$var_imp_plot <- renderPlotly({
+            NULL
+          })
+          
+        }
+        
+        
+        # If not using validation 
+      } else if(!input$h2o_validation){
+        splits <- h2o.splitFrame(
+          data = h2o_df$df, 
+          ratios = c(input$h2o_split),   
+          destination_frames = c("train", "test"), seed = 1234
+        )
+        h2o_df$train <- splits[[1]]
+        h2o_df$test  <- splits[[2]]
+        
+        if(input$binomial_models == "h2o_rf"){
+          h2o_df$model <- h2o.randomForest(       
+            training_frame = h2o_df$train,      
+            x = h2o_df$x,                        
+            y = h2o_df$y,
+            nfolds = n_folds,
+            ntrees = input$h2o_rf_ntree, 
+            max_depth = input$h2o_rf_max_depth,
+            histogram_type = input$rf_histogram_type,
+            col_sample_rate_change_per_level = input$h2o_rf_col_sample_rate_change_per_level,
+            col_sample_rate_per_tree = input$h2o_rf_col_sample_rate_per_tree,
+            sample_rate = input$h2o_rf_sample_rate
+          )
+          
+          sh <- as.data.frame(h2o.scoreHistory(h2o_df$model))
+          # Setting the confusion matrix output
+          train_pred <- as.data.frame(h2o.predict(
+            object = h2o_df$model,
+            newdata = h2o_df$train))
+          train_df <- as.data.frame(h2o_df$train[, h2o_df$y])
+          train_cm <- confusionMatrix(train_pred$predict, train_df[,1])
+          print("2")
+          test_pred <- as.data.frame(h2o.predict(
+            object = h2o_df$model,
+            newdata = h2o_df$test))
+          test_df <- as.data.frame(h2o_df$test[, h2o_df$y])
+          test_cm <- confusionMatrix(test_pred$predict, test_df[,1])
+          
+          output$cm_table <- function(){
+            cm_fun(train = train_cm$table, test = test_cm$table)
+          }
+          # RMSE plot without validation set
+          output$rmse_plot <- renderPlotly({
+            plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_rmse, 
+                    type = "scatter", mode = "lines+markers", name = "Training") %>%
+              layout(
+                title = "Random Forest - RMSE Score History",
+                yaxis = list(title = "RMSE", domain = c(0, 0.95)),
+                xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+              )
+          })
+          
+          
+          # Classification error plor without validation set
+          output$classification_error_plot <- renderPlotly({
+            plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_classification_error, 
+                    type = "scatter", mode = "lines+markers", name = "Training") %>%
+              layout(
+                title = "Random Forest - Classification Error Score History",
+                yaxis = list(title = "Classification Error", domain = c(0, 0.95)),
+                xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+              )
+          })
+          
+          # Logloss plot without validation set
+          output$logloss_plot <- renderPlotly({
+            plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_logloss, 
+                    type = "scatter", mode = "lines+markers", name = "Training") %>%
+              layout(
+                title = "Random Forest - Logloss Score History",
+                yaxis = list(title = "Classification Error", domain = c(0, 0.95)),
+                xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+              )
+          })
+          
+          # Variable importance plot
+          output$var_imp_plot <- renderPlotly({
+            var_imp <- h2o.varimp(h2o_df$model)
+            var_imp <- var_imp[order(var_imp$scaled_importance),]
+            var_order <- var_imp$variable
+            var_imp$variable <- factor(var_imp$variable, levels = var_order)
+            plot_ly(data = var_imp, y = ~ variable, x = ~ round(scaled_importance,2),
+                    type = "bar", orientation = 'h'
+            ) %>% 
+              layout(
+                title = "Random Forest - Variable Importance",
+                yaxis = list(title = ""),
+                xaxis = list(title = "Scaled Importance"),
+                margin = list(l = 155)
+              )
+          })
+          
+          
+          
+        } else if(input$binomial_models == "h2o_gbm"){
+          # h2o_df$model <- NULL
+          h2o_df$model <- h2o.gbm(       
+            training_frame = h2o_df$train,        
+            x = h2o_df$x,                        
+            y = h2o_df$y,  
+            nfolds = n_folds,
+            ntrees = input$h2o_gbm_ntree, 
+            max_depth = input$h2o_gbm_max_depth,
+            learn_rate = input$h2o_gbm_learn_rate,
+            learn_rate_annealing = input$h2o_gbm_learn_rate_annealing,
+            min_rows = input$h2o_gbm_min_rows,
+            min_split_improvement = input$h2o_gbm_min_split_improvement,
+            histogram_type = input$gbm_histogram_type
+          )
+          # Setting the confusion matrix output
+          train_pred <- as.data.frame(h2o.predict(
+            object = h2o_df$model,
+            newdata = h2o_df$train))
+          train_df <- as.data.frame(h2o_df$train[, h2o_df$y])
+          train_cm <- confusionMatrix(train_pred$predict, train_df[,1])
+          
+          test_pred <- as.data.frame(h2o.predict(
+            object = h2o_df$model,
+            newdata = h2o_df$test))
+          test_df <- as.data.frame(h2o_df$test[, h2o_df$y])
+          test_cm <- confusionMatrix(test_pred$predict, test_df[,1])
+          
+          output$cm_table  <- function(){
+            cm_fun(train = train_cm$table, test = test_cm$table)
+          }
+          sh <- as.data.frame(h2o.scoreHistory(h2o_df$model))
+          
+          # RMSE plot with validation set
+          output$rmse_plot <- renderPlotly({
+            plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_rmse, 
+                    type = "scatter", mode = "lines+markers", name = "Training") %>%
+              layout(
+                title = "GBM - RMSE Score History",
+                yaxis = list(title = "RMSE", domain = c(0, 0.95)),
+                xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+              )
+            
+          })
+          
+          # Classification error plot with validation set
+          output$classification_error_plot <- renderPlotly({
+            plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_classification_error, 
+                    type = "scatter", mode = "lines+markers", name = "Training") %>%
+              layout(
+                title = "GBM - Classification Error Score History",
+                yaxis = list(title = "Classification Error", domain = c(0, 0.95)),
+                xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+              )
+          })
+          
+          # Logloss plot with validation set
+          output$logloss_plot <- renderPlotly({
+            plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_logloss, 
+                    type = "scatter", mode = "lines+markers", name = "Training") %>%
+              layout(
+                title = "GBM - Logloss Score History",
+                yaxis = list(title = "Classification Error", domain = c(0, 0.95)),
+                xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+              )
+          })
+          
+          # Variable importance plot
+          output$var_imp_plot <- renderPlotly({
+            var_imp <- h2o.varimp(h2o_df$model)
+            var_imp <- var_imp[order(var_imp$scaled_importance),]
+            var_order <- var_imp$variable
+            var_imp$variable <- factor(var_imp$variable, levels = var_order)
+            plot_ly(data = var_imp, y = ~ variable, x = ~ round(scaled_importance,2),
+                    type = "bar", orientation = 'h'
+            ) %>% 
+              layout(
+                title = "GBM - Variable Importance",
+                yaxis = list(title = ""),
+                xaxis = list(title = "Scaled Importance"),
+                margin = list(l = 155)
+              )
+          })
+          
+        } else if(input$binomial_models == "h2o_glm"){
+          
+          if(input$h2o_glm_lambda_search){
+            lambda_search <- TRUE
+            lambda_min_ratio <- input$h2o_glm_lambda_min_ratio
+            nlambdas <- input$h2o_glm_nlambdas
+          } else {
+            lambda_search <- FALSE
+            lambda_min_ratio <- NULL
+            nlambdas <- NULL
+          }
+          
+          
+          h2o_df$model <- h2o.glm(       
+            training_frame = h2o_df$train,   
+            x = h2o_df$x,                        
+            y = h2o_df$y,  
+            family = h2o_df$binomial,
+            alpha = input$h2o_glm_alpha,
+            solver = input$h2o_glm_solver,
+            max_iterations = input$h2o_glm_max_iterations,
+            lambda_search = lambda_search,
+            lambda_min_ratio = lambda_min_ratio,
+            nlambdas = nlambdas
+          )
+          # Setting the confusion matrix output
+          train_pred <- as.data.frame(h2o.predict(
+            object = h2o_df$model,
+            newdata = h2o_df$train))
+          train_df <- as.data.frame(h2o_df$train[, h2o_df$y])
+          train_cm <- confusionMatrix(train_pred$predict, train_df[,1])
+          
+          test_pred <- as.data.frame(h2o.predict(
+            object = h2o_df$model,
+            newdata = h2o_df$test))
+          test_df <- as.data.frame(h2o_df$test[, h2o_df$y])
+          test_cm <- confusionMatrix(test_pred$predict, test_df[,1])
+          
+          output$cm_table  <- function(){
+            cm_fun(train = train_cm$table, test = test_cm$table)
+          }
+          sh <- as.data.frame(h2o.scoreHistory(h2o_df$model))
+          
+          # RMSE plot with validation set
+          output$rmse_plot <- renderPlotly({
+            NULL
+            
+          })
+          
+          # Classification error plot with validation set
+          output$classification_error_plot <- renderPlotly({
+            NULL
+          })
+          
+          # Logloss plot with validation set
+          output$logloss_plot <- renderPlotly({
+            NULL
+          })
+          
+          # Variable importance plot
+          output$var_imp_plot <- renderPlotly({
+            NULL
+          })
+          
+        }else if(input$binomial_models == "h2o_dl"){
+          # h2o_df$model <- NULL
+          
+          if(input$h2o_dl_num_hidden == 1){
+            hidden <- c(input$h2o_dl_layer1)
+          } else if(input$h2o_dl_num_hidden == 2){
+            hidden <- c(input$h2o_dl_layer1, input$h2o_dl_layer2)
+          } else if(input$h2o_dl_num_hidden == 3){
+            hidden <- c(input$h2o_dl_layer1, input$h2o_dl_layer2, input$h2o_dl_layer3)
+          } else if(input$h2o_dl_num_hidden == 4){
+            hidden <- c(input$h2o_dl_layer1, input$h2o_dl_layer2, input$h2o_dl_layer3, input$h2o_dl_layer4)
+          }
+          h2o_df$model <- h2o.deeplearning(       
+            training_frame = h2o_df$train,       
+            x = h2o_df$x,                        
+            y = h2o_df$y,  
+            nfolds = n_folds,
+            hidden = hidden, 
+            epochs = input$h2o_dl_epochs,
+            l1 = input$h2o_dl_l1,
+            l2 = input$h2o_dl_l2
+          )
+          # Setting the confusion matrix output
+          train_pred <- as.data.frame(h2o.predict(
+            object = h2o_df$model,
+            newdata = h2o_df$train))
+          train_df <- as.data.frame(h2o_df$train[, h2o_df$y])
+          train_cm <- confusionMatrix(train_pred$predict, train_df[,1])
+          
+          test_pred <- as.data.frame(h2o.predict(
+            object = h2o_df$model,
+            newdata = h2o_df$test))
+          test_df <- as.data.frame(h2o_df$test[, h2o_df$y])
+          test_cm <- confusionMatrix(test_pred$predict, test_df[,1])
+          
+          output$cm_table  <- function(){
+            cm_fun(train = train_cm$table, test = test_cm$table)
+          }
+          sh <- as.data.frame(h2o.scoreHistory(h2o_df$model))
+          
+          # RMSE plot with validation set
+          output$rmse_plot <- renderPlotly({
+            # plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_rmse, 
+            #         type = "scatter", mode = "lines+markers", name = "Training") %>%
+            #   add_trace(x = ~number_of_trees, y =  ~ validation_rmse, 
+            #             type = "scatter", mode = "lines+markers", name = "Validation")%>%
+            #   layout(
+            #     title = "GBM - RMSE Score History",
+            #     yaxis = list(title = "RMSE", domain = c(0, 0.95)),
+            #     xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+            #   )
+            
+          })
+          
+          # Classification error plot with validation set
+          output$classification_error_plot <- renderPlotly({
+            # plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_classification_error, 
+            #         type = "scatter", mode = "lines+markers", name = "Training") %>%
+            #   add_trace(x = ~number_of_trees, y =  ~ validation_classification_error, 
+            #             type = "scatter", mode = "lines+markers", name = "Validation")%>%
+            #   layout(
+            #     title = "GBM - Classification Error Score History",
+            #     yaxis = list(title = "Classification Error", domain = c(0, 0.95)),
+            #     xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+            #   )
+          })
+          
+          # Logloss plot with validation set
+          output$logloss_plot <- renderPlotly({
+            # plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_logloss, 
+            #         type = "scatter", mode = "lines+markers", name = "Training") %>%
+            #   add_trace(x = ~number_of_trees, y =  ~ validation_logloss, 
+            #             type = "scatter", mode = "lines+markers", name = "Validation")%>%
+            #   layout(
+            #     title = "GBM - Logloss Score History",
+            #     yaxis = list(title = "Classification Error", domain = c(0, 0.95)),
+            #     xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+            #   )
+          })
+          
+          # Variable importance plot
+          output$var_imp_plot <- renderPlotly({
+            var_imp <- h2o.varimp(h2o_df$model)
+            var_imp <- var_imp[order(var_imp$scaled_importance),]
+            var_order <- var_imp$variable
+            var_imp$variable <- factor(var_imp$variable, levels = var_order)
+            plot_ly(data = var_imp, y = ~ variable, x = ~ round(scaled_importance,2),
+                    type = "bar", orientation = 'h'
+            ) %>% 
+              layout(
+                title = "Deep Learning - Variable Importance",
+                yaxis = list(title = ""),
+                xaxis = list(title = "Scaled Importance"),
+                margin = list(l = 155)
+              )
+          })
+          
+        } 
+        
+      }
+    }
+  })
+  
+  
   
   #------------------------------ Server Function - End -------------------------------------  
 }
+
 #------------------------------ UI Function -------------------------------------
 ui <- dashboardPage(
   dashboardHeader(),
@@ -1246,7 +2128,7 @@ ui <- dashboardPage(
                 ),
                 menuItem("Visualization", icon = icon("bar-chart-o"), tabName = "vis"),
                 menuItem("Models", icon = icon("cog"), tabName = "models",
-                         menuSubItem("Classification", tabName = "class")
+                         menuSubItem("Regression & Classification", tabName = "models1")
                 )
     )
   ),
@@ -1414,7 +2296,7 @@ ui <- dashboardPage(
                                          
                                          
                                          circle = TRUE, status = "danger", icon = icon("gear"), width = "200px",
-                                         tooltip = tooltipOptions(title = "Click to see inputs !")
+                                         tooltip = tooltipOptions(title = "Plot Setting")
                                        ),
                                        plotlyOutput("data_tab2_ts")
                                        
@@ -1471,35 +2353,274 @@ ui <- dashboardPage(
       ),
       #------------------------------ Tabs Visualization End-------------------------------------
       #------------------------------ Tabs Classification Start-------------------------------------
-      tabItem(tabName = "class",
-              conditionalPanel(condition =  "output.loaded_table_flag == '1'",
-                               fluidPage(
-                                 fluidRow(
-                                   # conditionalPanel(condition = "output.h2o_flag == '2'",
-                                   infoBoxOutput("available_memory"),
-                                   infoBoxOutput("h2o_status")
-                                   # )
-                                 ),
-                                 fluidRow(
-                                   box(width = 3, title = "Package",
-                                       awesomeCheckboxGroup(inputId = "package", 
-                                                            label = "Packages", 
-                                                            choices = c("H2O", "caret"), selected = NULL, 
-                                                            inline = TRUE),
-                                       conditionalPanel(condition = "output.h2o_flag == '0'",
-                                                        actionButton("install_h2o", "Install H2O")),
-                                       conditionalPanel(condition = "output.h2o_flag == '1'",
-                                                        actionButton("load_h2o", "Load H2O")
-                                       ),
-                                       conditionalPanel(condition = "output.h2o_flag == '2'",
-                                                        uiOutput("h2o_into_ram"),
-                                                        actionButton("h2o_start", "Start Connection")
-                                       )
-                                       
-                                   )
-                                 )
-                               )
+      tabItem(tabName = "models1",
+              fluidRow(conditionalPanel(condition = "input.model_package.includes('H2O')",
+                                        infoBoxOutput("h2o_status_box"),
+                                        infoBoxOutput("h2o_cpu"),
+                                        infoBoxOutput("h2o_cluster_mem")  
               )
+              ),
+              fluidRow(
+                box(width = 2, title = "Model Inputs",
+                    
+                    conditionalPanel(condition = "input.model_package.includes('H2O')",
+                                     uiOutput("models1_df_list"),
+                                     conditionalPanel(condition = "output.model_tab_input == '1' || output.model_tab_input == '2'",
+                                                      uiOutput("models1_var_list"),
+                                                      uiOutput("models1_independent_list")
+                                     )
+                    ),
+                    awesomeCheckboxGroup(inputId = "model_package", 
+                                         label = "Set Packages", 
+                                         choices = c("H2O"), selected = NULL, 
+                                         inline = TRUE)
+                    
+                ),
+                conditionalPanel(condition = "output.dep_var_class == '1' && output.h2o_flag == '1'",
+                                 tabBox(
+                                   title = "Model Setting & Output", width = 10,
+                                   id = "class_setting", height = "500px",
+                                   
+                                   tabPanel("Model Setting",
+                                            fluidRow(
+                                              box(width = 3, title = "Model Setting",
+                                                  selectInput("binomial_models", "Select Classification Model",
+                                                              choices = c("Deep Learning (H2O)" = "h2o_dl",
+                                                                          "GLM (H2O)" = "h2o_glm",
+                                                                          "GBM (H2O)" = "h2o_gbm",
+                                                                          "Random Forest (H2O)" = "h2o_rf")
+                                                  ),
+                                                  materialSwitch(inputId = "h2o_validation", 
+                                                                 label = "Add Validation Partition", 
+                                                                 status = "primary", right = FALSE),
+                                                  conditionalPanel(condition = "input.h2o_validation == true",
+                                                                   sliderInput("h2o_split_v", "Set the Training/Testing/Validation Partitions:",
+                                                                               min = 0.05, max = 1,
+                                                                               value = c(0.6,0.8))),
+                                                  conditionalPanel(condition = "input.h2o_validation == false",
+                                                                   sliderInput("h2o_split", "Set the Training/Testing Partitions:",
+                                                                               min = 0.05, max = 1,
+                                                                               value = 0.7)),
+                                                  materialSwitch(inputId = "nfolds_flag", 
+                                                                 label = "N-fold Cross-Validation", 
+                                                                 status = "primary", right = FALSE),
+                                                  conditionalPanel(condition = "input.nfolds_flag == true",
+                                                                   sliderInput("nfolds", "Set the Number of folds:",
+                                                                               min = 3, max = 10, step = 1,
+                                                                               value = 5))
+                                              ),
+                                              box(width = 3, title = "Model Tuning",
+                                                  conditionalPanel( condition = "input.binomial_models == 'h2o_rf'",
+                                                                    dropdownButton(
+                                                                      tags$h4("More Tunning Parameters"),
+                                                                      selectInput("rf_histogram_type", "Optimal Split Histogram Type",
+                                                                                  choices = c("AUTO" = "AUTO",
+                                                                                              "UniformAdaptive" = "UniformAdaptive",
+                                                                                              "Random" = "Random",
+                                                                                              "QuantilesGlobal" = "QuantilesGlobal",
+                                                                                              "RoundRobin" = "RoundRobin"
+                                                                                  ),
+                                                                                  selected = "AUTO"
+                                                                      ),
+                                                                      sliderInput("h2o_rf_col_sample_rate_change_per_level", "Column Sample Rate Change Per Level",
+                                                                                  min = 0, max = 2,
+                                                                                  value = 1, step = 0.01
+                                                                      ),
+                                                                      sliderInput("h2o_rf_col_sample_rate_per_tree", "Column Sample Rate Per Tree",
+                                                                                  min = 0, max = 1,
+                                                                                  value = 1, step = 0.01
+                                                                      ),
+                                                                      sliderInput("h2o_rf_sample_rate", "Row Sampling Rate",
+                                                                                  min = 0, max = 1,
+                                                                                  value = 0.632, step = 0.01
+                                                                      ),
+                                                                      circle = TRUE, status = "danger", icon = icon("gear"), width = "300px",
+                                                                      tooltip = tooltipOptions(title = "More Tunning ")
+                                                                    ),
+                                                                    sliderInput("h2o_rf_ntree", "Number of Trees",
+                                                                                min = 25, max = 1000,
+                                                                                value = 50, step = 25),
+                                                                    sliderInput("h2o_rf_max_depth", "Maximum Tree Depth",
+                                                                                min = 1, max = 30,
+                                                                                value = 20
+                                                                    )
+                                                                    
+                                                  ),
+                                                  conditionalPanel( condition = "input.binomial_models == 'h2o_gbm'",
+                                                                    dropdownButton(
+                                                                      tags$h4("More Tunning Parameters"),
+                                                                      selectInput("gbm_histogram_type", "Optimal Split Histogram Type",
+                                                                                  choices = c("AUTO" = "AUTO",
+                                                                                              "UniformAdaptive" = "UniformAdaptive",
+                                                                                              "Random" = "Random",
+                                                                                              "QuantilesGlobal" = "QuantilesGlobal",
+                                                                                              "RoundRobin" = "RoundRobin"
+                                                                                  ),
+                                                                                  selected = "AUTO"
+                                                                      ),
+                                                                      sliderInput("h2o_gbm_learn_rate", "Learning Rate",
+                                                                                  min = 0, max = 1,
+                                                                                  value = 0.1
+                                                                      ),
+                                                                      sliderInput("h2o_gbm_learn_rate_annealing", "Learning Rate",
+                                                                                  min = 0, max = 1,
+                                                                                  value = 1
+                                                                      ),
+                                                                      sliderInput("h2o_gbm_min_rows", "Min. Rows",
+                                                                                  min = 5, max = 20,
+                                                                                  value = 1
+                                                                      ),
+                                                                      sliderInput("h2o_gbm_min_split_improvement", "Min. Split Improvement",
+                                                                                  min = 1e-10, max = 1e-3,
+                                                                                  value = 1e-10
+                                                                      ),
+                                                                      circle = TRUE, status = "danger", icon = icon("gear"), width = "300px",
+                                                                      tooltip = tooltipOptions(title = "More Tunning ")
+                                                                    ),
+                                                                    sliderInput("h2o_gbm_ntree", "Number of Trees",
+                                                                                min = 25, max = 1000,
+                                                                                value = 50, step = 25),
+                                                                    sliderInput("h2o_gbm_max_depth", "Maximum Tree Depth",
+                                                                                min = 1, max = 30,
+                                                                                value = 5
+                                                                    )
+                                                                    
+                                                                    
+                                                                    
+                                                  ),
+                                                  fluidRow(
+                                                    conditionalPanel( condition = "input.binomial_models == 'h2o_dl'",
+                                                                      fluidRow(
+                                                                        column(width = 2, 
+                                                                               dropdownButton(
+                                                                                 tags$h4("Layer Setting"),
+                                                                                 sliderInput("h2o_dl_num_hidden", "Number of Hidden Layers",
+                                                                                             min = 1, max = 4, 
+                                                                                             value = 2, step = 1
+                                                                                 ),
+                                                                                 conditionalPanel(condition =  "input.h2o_dl_num_hidden == 1",
+                                                                                                  sliderInput("h2o_dl_layer1", "Number of Hidden Layers",
+                                                                                                              min = 1, max = 1000,
+                                                                                                              value = 200, step = 1
+                                                                                                  )
+                                                                                 ),
+                                                                                 conditionalPanel(condition =  "input.h2o_dl_num_hidden == 2",
+                                                                                                  sliderInput("h2o_dl_layer1", "Number of Hidden Layers",
+                                                                                                              min = 1, max = 1000,
+                                                                                                              value = 200, step = 1
+                                                                                                  ),
+                                                                                                  sliderInput("h2o_dl_layer2", "Number of Hidden Layers",
+                                                                                                              min = 1, max = 1000,
+                                                                                                              value = 200, step = 1
+                                                                                                  )
+                                                                                 ),
+                                                                                 conditionalPanel(condition =  "input.h2o_dl_num_hidden == 3",
+                                                                                                  sliderInput("h2o_dl_layer1", "Number of Hidden Layers",
+                                                                                                              min = 1, max = 1000,
+                                                                                                              value = 200, step = 1
+                                                                                                  ),
+                                                                                                  sliderInput("h2o_dl_layer2", "Number of Hidden Layers",
+                                                                                                              min = 1, max = 1000,
+                                                                                                              value = 200, step = 1
+                                                                                                  ),
+                                                                                                  sliderInput("h2o_dl_layer3", "Number of Hidden Layers",
+                                                                                                              min = 1, max = 1000,
+                                                                                                              value = 200, step = 1
+                                                                                                  )
+                                                                                 ),
+                                                                                 conditionalPanel(condition =  "input.h2o_dl_num_hidden == 4",
+                                                                                                  sliderInput("h2o_dl_layer1", "Number of Hidden Layers",
+                                                                                                              min = 1, max = 1000,
+                                                                                                              value = 200, step = 1
+                                                                                                  ),
+                                                                                                  sliderInput("h2o_dl_layer2", "Number of Hidden Layers",
+                                                                                                              min = 1, max = 1000,
+                                                                                                              value = 200, step = 1
+                                                                                                  ),
+                                                                                                  sliderInput("h2o_dl_layer3", "Number of Hidden Layers",
+                                                                                                              min = 1, max = 1000,
+                                                                                                              value = 200, step = 1
+                                                                                                  ),
+                                                                                                  sliderInput("h2o_dl_layer4", "Number of Hidden Layers",
+                                                                                                              min = 1, max = 1000,
+                                                                                                              value = 200, step = 1
+                                                                                                  )
+                                                                                 ),
+                                                                                 
+                                                                                 circle = TRUE, status = "danger", icon = icon("gear"), width = "300px",
+                                                                                 tooltip = tooltipOptions(title = "Layer Setting ")
+                                                                               )),
+                                                                        column(width = 2, offset = 2, 
+                                                                               dropdownButton(
+                                                                                 tags$h4("Layer Setting"),
+                                                                                 circle = TRUE, status = "danger", icon = icon("gear"), width = "300px",
+                                                                                 tooltip = tooltipOptions(title = "Early Stop")
+                                                                               )))
+                                                    ),
+                                                    sliderInput("h2o_dl_epochs", "Number of Epochs",
+                                                                min = 1, max = 10000,
+                                                                value = 10, step = 1),
+                                                    sliderInput("h2o_dl_l1", "L1 Regularization",
+                                                                min = 0, max = 1,
+                                                                value = 0, step = 1e-5
+                                                    ),
+                                                    sliderInput("h2o_dl_l2", "L2 Regularization",
+                                                                min = 0, max = 1,
+                                                                value = 0, step = 1e-5
+                                                    )
+                                                    
+                                                  ),
+                                                  
+                                                  conditionalPanel( condition = "input.binomial_models == 'h2o_glm'",
+                                                                    dropdownButton(
+                                                                      tags$h4("More Tunning Parameters"),
+                                                                      selectInput("glm_solver", "Solver",
+                                                                                  choices = c("AUTO" = "AUTO",
+                                                                                              "IRLSM" = "IRLSM",
+                                                                                              "L_BFGS" = "L_BFGS",
+                                                                                              "COORDINATE_DESCENT" = "COORDINATE_DESCENT",
+                                                                                              "COORDINATE_DESCENT_NAIVE" = "COORDINATE_DESCENT_NAIVE"
+                                                                                  ),
+                                                                                  selected = "AUTO"
+                                                                      ),
+                                                                      sliderInput("h2o_glm_max_iterations", "Solver Max Iterations",
+                                                                                  min = 10, max = 1000,
+                                                                                  value = 50, step = 10),
+                                                                      circle = TRUE, status = "danger", icon = icon("gear"), width = "300px",
+                                                                      tooltip = tooltipOptions(title = "More Tunning ")
+                                                                    ),
+                                                                    sliderInput("h2o_glm_alpha", "Alpha Parameter",
+                                                                                min = 0, max = 1,
+                                                                                value = 0.5, step = 0.01), 
+                                                                    materialSwitch(inputId = "h2o_glm_lambda_search", 
+                                                                                   label = "Lambda Search", 
+                                                                                   status = "primary", right = FALSE,
+                                                                                   value = TRUE),
+                                                                    conditionalPanel(condition = "input.h2o_glm_lambda_search == true",
+                                                                                     sliderInput("h2o_glm_lambda_min_ratio", "Lambda Min. Ratio",
+                                                                                                 min = 0.0001, max = 0.001,
+                                                                                                 value = 0.0001, step = 0.0001), 
+                                                                                     sliderInput("h2o_glm_nlambdas", "Number of Lambdas",
+                                                                                                 min = 10, max = 200,
+                                                                                                 value = 100, step = 1) 
+                                                                    )
+                                                                    
+                                                  ),
+                                                  actionButton("h2o_run_class", "Run Model")
+                                              ),
+                                              box(width = 3, title = "Confusion Matrix",
+                                                  tableOutput("cm_table"))
+                                            )
+                                   ),
+                                   tabPanel("Variable Importance", plotlyOutput("var_imp_plot")),
+                                   tabPanel("RMSE", plotlyOutput("rmse_plot")),
+                                   tabPanel("Classification Error", plotlyOutput("classification_error_plot")),
+                                   tabPanel("Logloss", plotlyOutput("logloss_plot"))
+                                   
+                                 )
+                )
+              )
+              
       )
       #------------------------------ Tabs Classification End-------------------------------------
       
@@ -1507,7 +2628,6 @@ ui <- dashboardPage(
     )
   )
 )
-
 
 #------------------------------ Call the App -------------------------------------
 runApp(list(ui = ui, server = server), launch.browser = TRUE)

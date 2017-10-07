@@ -1589,6 +1589,110 @@ observeEvent(input$h2o_run_class, {
           )
       })
       
+     } else if(input$binomial_models == "h2o_dl"){
+       # h2o_df$model <- NULL
+       
+       if(input$h2o_dl_num_hidden == 1){
+         hidden <- c(input$h2o_dl_layer1)
+       } else if(input$h2o_dl_num_hidden == 2){
+         hidden <- c(input$h2o_dl_layer1, input$h2o_dl_layer2)
+       } else if(input$h2o_dl_num_hidden == 3){
+         hidden <- c(input$h2o_dl_layer1, input$h2o_dl_layer2, input$h2o_dl_layer3)
+       } else if(input$h2o_dl_num_hidden == 4){
+         hidden <- c(input$h2o_dl_layer1, input$h2o_dl_layer2, input$h2o_dl_layer3, input$h2o_dl_layer4)
+       }
+       h2o_df$model <- h2o.deeplearning(       
+         training_frame = h2o_df$train,        
+         validation_frame = h2o_df$valid,      
+         x = h2o_df$x,                        
+         y = h2o_df$y,  
+         nfolds = n_folds,
+         hidden = hidden, 
+         epochs = input$h2o_dl_epochs,
+         l1 = input$h2o_dl_l1,
+         l2 = input$h2o_dl_l2
+       )
+       # Setting the confusion matrix output
+       train_pred <- as.data.frame(h2o.predict(
+         object = h2o_df$model,
+         newdata = h2o_df$train))
+       train_df <- as.data.frame(h2o_df$train[, h2o_df$y])
+       train_cm <- confusionMatrix(train_pred$predict, train_df[,1])
+       
+       valid_pred <- as.data.frame(h2o.predict(
+         object = h2o_df$model,
+         newdata = h2o_df$valid))
+       valid_df <- as.data.frame(h2o_df$valid[, h2o_df$y])
+       valid_cm <- confusionMatrix(valid_pred$predict, valid_df[,1])
+       
+       test_pred <- as.data.frame(h2o.predict(
+         object = h2o_df$model,
+         newdata = h2o_df$test))
+       test_df <- as.data.frame(h2o_df$test[, h2o_df$y])
+       test_cm <- confusionMatrix(test_pred$predict, test_df[,1])
+       
+       output$cm_table  <- function(){
+         cm_fun_v(train = train_cm$table, valid = valid_cm$table, test = test_cm$table)
+       }
+       sh <- as.data.frame(h2o.scoreHistory(h2o_df$model))
+       
+       # RMSE plot with validation set
+       output$rmse_plot <- renderPlotly({
+         # plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_rmse, 
+         #         type = "scatter", mode = "lines+markers", name = "Training") %>%
+         #   add_trace(x = ~number_of_trees, y =  ~ validation_rmse, 
+         #             type = "scatter", mode = "lines+markers", name = "Validation")%>%
+         #   layout(
+         #     title = "GBM - RMSE Score History",
+         #     yaxis = list(title = "RMSE", domain = c(0, 0.95)),
+         #     xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+         #   )
+         
+       })
+       
+       # Classification error plot with validation set
+       output$classification_error_plot <- renderPlotly({
+         # plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_classification_error, 
+         #         type = "scatter", mode = "lines+markers", name = "Training") %>%
+         #   add_trace(x = ~number_of_trees, y =  ~ validation_classification_error, 
+         #             type = "scatter", mode = "lines+markers", name = "Validation")%>%
+         #   layout(
+         #     title = "GBM - Classification Error Score History",
+         #     yaxis = list(title = "Classification Error", domain = c(0, 0.95)),
+         #     xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+         #   )
+       })
+       
+       # Logloss plot with validation set
+       output$logloss_plot <- renderPlotly({
+         # plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_logloss, 
+         #         type = "scatter", mode = "lines+markers", name = "Training") %>%
+         #   add_trace(x = ~number_of_trees, y =  ~ validation_logloss, 
+         #             type = "scatter", mode = "lines+markers", name = "Validation")%>%
+         #   layout(
+         #     title = "GBM - Logloss Score History",
+         #     yaxis = list(title = "Classification Error", domain = c(0, 0.95)),
+         #     xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+         #   )
+       })
+       
+       # Variable importance plot
+       output$var_imp_plot <- renderPlotly({
+         var_imp <- h2o.varimp(h2o_df$model)
+         var_imp <- var_imp[order(var_imp$scaled_importance),]
+         var_order <- var_imp$variable
+         var_imp$variable <- factor(var_imp$variable, levels = var_order)
+         plot_ly(data = var_imp, y = ~ variable, x = ~ round(scaled_importance,2),
+                 type = "bar", orientation = 'h'
+         ) %>% 
+           layout(
+             title = "Deep Learning - Variable Importance",
+             yaxis = list(title = ""),
+             xaxis = list(title = "Scaled Importance"),
+             margin = list(l = 155)
+           )
+       })
+       
      } else if(input$binomial_models == "h2o_glm"){
        
        if(input$h2o_glm_lambda_search){
@@ -1905,7 +2009,104 @@ observeEvent(input$h2o_run_class, {
         NULL
       })
       
-    }
+    }else if(input$binomial_models == "h2o_dl"){
+      # h2o_df$model <- NULL
+      
+      if(input$h2o_dl_num_hidden == 1){
+        hidden <- c(input$h2o_dl_layer1)
+      } else if(input$h2o_dl_num_hidden == 2){
+        hidden <- c(input$h2o_dl_layer1, input$h2o_dl_layer2)
+      } else if(input$h2o_dl_num_hidden == 3){
+        hidden <- c(input$h2o_dl_layer1, input$h2o_dl_layer2, input$h2o_dl_layer3)
+      } else if(input$h2o_dl_num_hidden == 4){
+        hidden <- c(input$h2o_dl_layer1, input$h2o_dl_layer2, input$h2o_dl_layer3, input$h2o_dl_layer4)
+      }
+      h2o_df$model <- h2o.deeplearning(       
+        training_frame = h2o_df$train,       
+        x = h2o_df$x,                        
+        y = h2o_df$y,  
+        nfolds = n_folds,
+        hidden = hidden, 
+        epochs = input$h2o_dl_epochs,
+        l1 = input$h2o_dl_l1,
+        l2 = input$h2o_dl_l2
+      )
+      # Setting the confusion matrix output
+      train_pred <- as.data.frame(h2o.predict(
+        object = h2o_df$model,
+        newdata = h2o_df$train))
+      train_df <- as.data.frame(h2o_df$train[, h2o_df$y])
+      train_cm <- confusionMatrix(train_pred$predict, train_df[,1])
+      
+      test_pred <- as.data.frame(h2o.predict(
+        object = h2o_df$model,
+        newdata = h2o_df$test))
+      test_df <- as.data.frame(h2o_df$test[, h2o_df$y])
+      test_cm <- confusionMatrix(test_pred$predict, test_df[,1])
+      
+      output$cm_table  <- function(){
+        cm_fun(train = train_cm$table, test = test_cm$table)
+      }
+      sh <- as.data.frame(h2o.scoreHistory(h2o_df$model))
+      
+      # RMSE plot with validation set
+      output$rmse_plot <- renderPlotly({
+        # plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_rmse, 
+        #         type = "scatter", mode = "lines+markers", name = "Training") %>%
+        #   add_trace(x = ~number_of_trees, y =  ~ validation_rmse, 
+        #             type = "scatter", mode = "lines+markers", name = "Validation")%>%
+        #   layout(
+        #     title = "GBM - RMSE Score History",
+        #     yaxis = list(title = "RMSE", domain = c(0, 0.95)),
+        #     xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+        #   )
+        
+      })
+      
+      # Classification error plot with validation set
+      output$classification_error_plot <- renderPlotly({
+        # plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_classification_error, 
+        #         type = "scatter", mode = "lines+markers", name = "Training") %>%
+        #   add_trace(x = ~number_of_trees, y =  ~ validation_classification_error, 
+        #             type = "scatter", mode = "lines+markers", name = "Validation")%>%
+        #   layout(
+        #     title = "GBM - Classification Error Score History",
+        #     yaxis = list(title = "Classification Error", domain = c(0, 0.95)),
+        #     xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+        #   )
+      })
+      
+      # Logloss plot with validation set
+      output$logloss_plot <- renderPlotly({
+        # plot_ly(data = sh, x = ~number_of_trees, y =  ~ training_logloss, 
+        #         type = "scatter", mode = "lines+markers", name = "Training") %>%
+        #   add_trace(x = ~number_of_trees, y =  ~ validation_logloss, 
+        #             type = "scatter", mode = "lines+markers", name = "Validation")%>%
+        #   layout(
+        #     title = "GBM - Logloss Score History",
+        #     yaxis = list(title = "Classification Error", domain = c(0, 0.95)),
+        #     xaxis = list(title = "Number of Trees", domain = c(0, 0.95))
+        #   )
+      })
+      
+      # Variable importance plot
+      output$var_imp_plot <- renderPlotly({
+        var_imp <- h2o.varimp(h2o_df$model)
+        var_imp <- var_imp[order(var_imp$scaled_importance),]
+        var_order <- var_imp$variable
+        var_imp$variable <- factor(var_imp$variable, levels = var_order)
+        plot_ly(data = var_imp, y = ~ variable, x = ~ round(scaled_importance,2),
+                type = "bar", orientation = 'h'
+        ) %>% 
+          layout(
+            title = "Deep Learning - Variable Importance",
+            yaxis = list(title = ""),
+            xaxis = list(title = "Scaled Importance"),
+            margin = list(l = 155)
+          )
+      })
+      
+    } 
     
   }
   }
