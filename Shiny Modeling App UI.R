@@ -1,12 +1,12 @@
 #------------------------------ UI Function -------------------------------------
 ui <- dashboardPage(
-  dashboardHeader(),
+  dashboardHeader(title = "ML Studio"),
 #------------------------------ Side Bar Function -------------------------------------
   dashboardSidebar(
     sidebarMenu(id = "tabs", 
       menuItem("Data", tabName = "data", icon = icon("table"), startExpanded = TRUE,
-               menuSubItem("Data", tabName = "data1"),
-               menuSubItem("Data Prep", tabName = "data2")
+               menuSubItem("Load", tabName = "data1"),
+               menuSubItem("Prep", tabName = "data2")
                ),
       menuItem("Visualization", icon = icon("bar-chart-o"), tabName = "vis"),
       menuItem("Models", icon = icon("cog"), tabName = "models",
@@ -124,8 +124,7 @@ tabItem(tabName = "data2",
               selectInput('data_option', 'Select Option', 
                           list(
                             "Variables Attributes" = "var_attr",
-                            "Data Summarise" = "data_summary",
-                            "Reshape Options" = "data_reshape"
+                            "Data Summarise" = "data_summary"
                           ))
               ),
               conditionalPanel(condition =  "output.loaded_table_flag == '1' && output.class_df_flag == false && input.data_option == 'var_attr'",
@@ -155,7 +154,7 @@ tabItem(tabName = "data2",
               )
               
             )),
-          conditionalPanel(condition =  "output.loaded_table_flag == '1' && output.class_df_flag == false ",
+          conditionalPanel(condition =  "output.loaded_table_flag == '1' && output.class_df_flag == false && input.data_option == 'var_attr'",
           box(width = 4, title = "List of Variables",
               DT::dataTableOutput("data_tab2_var")
             
@@ -165,6 +164,28 @@ tabItem(tabName = "data2",
               tableOutput("data_tab2_var_summary")
           )
           ),
+          conditionalPanel(condition = "output.loaded_table_flag == '1' && input.data_option == 'data_summary'",
+                           box(width = 4, title = "Create a Summary",
+                               uiOutput("group_by"),
+                               conditionalPanel(condition = "output.loaded_table_flag == '1' && input.data_option == 'data_summary' && output.group_by_flag == '1'",
+                                                uiOutput("summarise_var")
+                                                
+                                              ),
+                               conditionalPanel(condition = "output.loaded_table_flag == '1' && input.data_option == 'data_summary' && output.group_by_flag == '1'",
+                                                uiOutput("dplyr_fun"),
+                                                uiOutput("summary_name"),
+                                                actionButton("run_summary", "Run")
+                               )                 
+                               ),
+                           conditionalPanel(condition = "output.dplyr_table_flag == '1'  && input.data_option == 'data_summary' && output.group_by_flag == '1'",
+                           box(width = 4, title = "Summary",
+                               div(style = 'overflow-x: scroll',
+                               DT::dataTableOutput('dplyr_table')
+                               )
+                               )
+                           )
+                          ),
+          
           conditionalPanel(condition =  "output.loaded_table_flag == '1' && output.class_df_flag == true ",
                            box(width = 8, title = "Time Series Plot",
                                dropdownButton(
@@ -175,8 +196,6 @@ tabItem(tabName = "data2",
                                               label = "Radio buttons", 
                                               choices = c("lines","lines+markers", "markers")
                                               , selected = "lines"),
-                                 
-                                 
                                  circle = TRUE, status = "danger", icon = icon("gear"), width = "200px",
                                  tooltip = tooltipOptions(title = "Plot Setting")
                                ),
@@ -226,7 +245,7 @@ tabItem(tabName = "vis",
           ),
           fluidRow(
             box(width = 12, title = "plot",
-                plotlyOutput("main_plot")
+                withSpinner(plotlyOutput("main_plot"))
                 
                 )
           )
@@ -494,10 +513,11 @@ tabItem(tabName = "models1",
                        tableOutput("cm_table"))
                    )
                    ),
-          tabPanel("Variable Importance", plotlyOutput("var_imp_plot")),
-          tabPanel("RMSE", plotlyOutput("rmse_plot")),
-          tabPanel("Classification Error", plotlyOutput("classification_error_plot")),
-          tabPanel("Logloss", plotlyOutput("logloss_plot"))
+          tabPanel("Variable Importance", withSpinner(plotlyOutput("var_imp_plot"))),
+          conditionalPanel( condition = "input.binomial_models == 'h2o_glm'",
+          tabPanel("RMSE", withSpinner(plotlyOutput("rmse_plot")))),
+          tabPanel("Classification Error", withSpinner(plotlyOutput("classification_error_plot"))),
+          tabPanel("Logloss", withSpinner(plotlyOutput("logloss_plot")))
           
         )
       )

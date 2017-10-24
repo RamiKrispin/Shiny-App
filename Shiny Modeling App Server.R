@@ -2,6 +2,7 @@
 set.seed(1234)
 #Setting the required packages
 pkgs <- c("shiny", "shinydashboard", "shinyWidgets",
+          "shinycssloaders",
           "plotly", "caret",
           "dplyr", "data.table", "lubridate", "reshape2",
           "DT", "knitr", "kableExtra",
@@ -431,11 +432,11 @@ server <- function(input, output,session) {
   
   # View of the data
   output$view_table <- DT::renderDataTable(
-    df_tbl_view(), 
+    df_tbl_view()[1:10,], 
     server = FALSE, 
     rownames = FALSE,
     options = list(pageLength = 10,
-    lengthMenu = c(10, 25, 50))
+    lengthMenu = NULL)
   )
   
   #------------------------------ Loading a selected dataset  ------------------------------------- 
@@ -555,7 +556,7 @@ server <- function(input, output,session) {
         )
       input_df$class <- input_df$df_class[[which(names(input_df$df_list) == input$select_df)]]
       output$data_tab2_table <- DT::renderDataTable(
-        data.frame(input_df$df),selection = list(selected = 1, mode = 'single'), 
+        data.frame(input_df$df),selection = list(selected = 1, mode = 'single'),
         options = list(pageLength = 10,
                        lengthMenu = c(10, 25, 50))
       )
@@ -568,11 +569,18 @@ server <- function(input, output,session) {
   })
 #------------------------------ Data tab 2 - Data Prep -------------------------------------    
 #------------------------------ Data tab 2 - Creating Variables Table ------------------------------------- 
+  dplyr_df <- reactiveValues(df_name = NULL,
+                             group_by = NULL,
+                             var_summarise = NULL,
+                             sum_by_flag = 0,
+                             dplyr_fun_option = NULL)
+  
   observeEvent({input$data_option
                 input_df$df
                 input$select_df
                 }, {
-    if(!is.ts(input_df$df)){            
+    if(!is.ts(input_df$df)){
+      # Variable Attributes
     if(input$data_option == "var_attr" &
        !is.null(input_df$df) &
        !is.null(input_df$loaded_table)
@@ -600,7 +608,30 @@ server <- function(input, output,session) {
         options = list(lengthMenu = c(5, 10, 15, 20), pageLength = 10, dom = 'p')
       )
          
-    } 
+    } else if(input$data_option == "data_summary" &
+              !is.null(input_df$df) &
+              !is.null(input_df$loaded_table)) {
+      output$group_by  <- renderUI({
+        selectizeInput("group_by_summary", "Group by", 
+                       choices = names(input_df$df), 
+                       multiple = TRUE)
+                })
+      output$summarise_var  <- renderUI({
+        pickerInput(inputId = "summarise_vars", 
+                    label = "Summarise by", 
+                    choices = names(input_df$df), options = list(`actions-box` = TRUE), 
+                    multiple = TRUE
+                    )
+        # selectInput("summarise_vars", "Summarise by", 
+        #                choices = names(input_df$df), 
+        #                multiple = TRUE)
+      })
+      
+      output$summary_name <- renderUI({
+        textInput("summary_df_name", label = "Set the Table Name", value = paste(input$select_df, "summary", sep = "_"))
+      })
+               
+              }
     } else {
       output$data_tab2_ts <- renderPlotly({
         
@@ -617,6 +648,139 @@ server <- function(input, output,session) {
     }
   })
 
+  
+observeEvent({
+  input$group_by_summary
+  input$data_option
+  input$select_df
+  },{
+  if(input$data_option == "data_summary" &
+     !is.null(input$group_by_summary)){
+    dplyr_df$group_by <- input$group_by_summary
+    output$group_by_flag <- reactive({"1"})
+    outputOptions(output, "group_by_flag", suspendWhenHidden = FALSE)  
+  } else {
+    output$group_by_flag <- reactive({"0"})
+    outputOptions(output, "group_by_flag", suspendWhenHidden = FALSE)  
+  }
+}) 
+  
+observeEvent({
+  input$group_by_summary
+  input$data_option
+  input$summarise_vars
+  input$select_df
+  
+},{
+  if(input$data_option == "data_summary" &
+     !is.null(input$group_by_summary) & 
+     !is.null(input$summarise_vars)){
+    dplyr_df$var_summarise <- input$summarise_vars
+    output$var_summarise_flag <- reactive({"1"})
+    outputOptions(output, "var_summarise_flag", suspendWhenHidden = FALSE)
+    dplyr_df$sum_by_flag <- 1
+    dplyr_df$dplyr_fun_option <- c("Count",
+                           "Mean", 
+                           "Std Deviation", 
+                           "Minimum", 
+                           "Maximum" )
+  } else {
+   
+    output$var_summarise_flag <- reactive({"0"})
+    outputOptions(output, "var_summarise_flag", suspendWhenHidden = FALSE)
+    dplyr_df$sum_by_flag <- 0
+    dplyr_df$dplyr_fun_option <- c("Count")
+  }
+  
+}) 
+
+observeEvent({
+  dplyr_df$sum_by_flag
+}, {
+  output$dplyr_fun <- renderUI({
+    awesomeCheckboxGroup(inputId = "dplyr_funs", 
+                         label = "Summarise", 
+                         choices = dplyr_df$dplyr_fun_option, 
+                         selected = "Count", 
+                         inline = FALSE)
+  })
+})
+
+
+observeEvent({
+  input$run_summary
+}, {
+  if(is.null(input$dplyr_funs)){
+    showModal(modalDialog(
+      title = "Warning - Select Summary Function",
+      HTML(paste("No summary function was selceted",
+                 "Please select at least one function", 
+                 sep = "<br/>")
+      ), size = "s"
+    ))
+    output$dplyr_table_flag <- reactive("0")
+    outputOptions(output, "dplyr_table_flag", suspendWhenHidden = FALSE)
+  } else if(!is.null(input$dplyr_funs) &
+            !is.null(input$group_by_summary) & 
+            is.null(input$summarise_vars)
+            ){
+    
+    dplyr_str <- NULL
+    dplyr_str <- paste("input_df$df %>% group_by(", paste(input$group_by_summary, collapse = ","), 
+                       ") %>% summarise(Count = n())", sep = " ")
+    
+    
+    output$dplyr_table <- DT::renderDataTable(
+      eval(parse(text = dplyr_str)), 
+      server = FALSE, 
+      rownames = FALSE,
+      options = list(pageLength = 10,
+                     lengthMenu = NULL)
+    )
+    output$dplyr_table_flag <- reactive("1")
+    outputOptions(output, "dplyr_table_flag", suspendWhenHidden = FALSE)
+  } else if(!is.null(input$dplyr_funs) &
+            !is.null(input$group_by_summary) & 
+            !is.null(input$summarise_vars)
+  ){
+    
+    dplyr_str <- NULL
+    sum_str <- NULL
+    
+    for(f in input$dplyr_funs){
+      if(f == "Count"){
+        sum_str <- c(sum_str, paste(input$summarise_vars, "_count = n()", sep = "", collapse = ","))
+      }
+      if(f == "Mean"){
+        sum_str <- c(sum_str, paste(input$summarise_vars, "_mean = mean(", input$summarise_vars ," ,na.rm = TRUE)", sep = "", collapse = ","))
+      }
+      if(f == "Std Deviation"){
+        sum_str <- c(sum_str, paste(input$summarise_vars, "_sd = sd(", input$summarise_vars ," ,na.rm = TRUE)", sep = "", collapse = ","))
+      }
+      if(f == "Minimum"){
+        sum_str <- c(sum_str, paste(input$summarise_vars, "_min = min(", input$summarise_vars ," ,na.rm = TRUE)", sep = "", collapse = ","))
+      }
+      if(f == "Maximum"){
+        sum_str <- c(sum_str, paste(input$summarise_vars, "_max = max(", input$summarise_vars ," ,na.rm = TRUE)", sep = "", collapse = ","))
+      }
+    }
+    dplyr_str <- paste("input_df$df %>% group_by(", paste(input$group_by_summary, collapse = ","), 
+                       ") %>% summarise(", paste(sum_str, collapse = ","), ")", sep = " ")
+    
+    
+    
+    output$dplyr_table <- DT::renderDataTable(
+      eval(parse(text = dplyr_str)), 
+      server = FALSE, 
+      rownames = FALSE,
+      options = list(pageLength = 10,
+                     lengthMenu = NULL)
+    )
+    
+    output$dplyr_table_flag <- reactive("1")
+    outputOptions(output, "dplyr_table_flag", suspendWhenHidden = FALSE)
+  }
+})  
 output$class_df_flag <- reactive({
   ifelse(is.ts(input_df$df), TRUE, FALSE)
 })
@@ -1798,7 +1962,6 @@ observeEvent(input$h2o_run_class, {
         newdata = h2o_df$train))
       train_df <- as.data.frame(h2o_df$train[, h2o_df$y])
       train_cm <- confusionMatrix(train_pred$predict, train_df[,1])
-      print("2")
       test_pred <- as.data.frame(h2o.predict(
         object = h2o_df$model,
         newdata = h2o_df$test))
