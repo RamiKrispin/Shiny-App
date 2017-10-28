@@ -1,0 +1,13 @@
+----------------------------------------------------------------
+Thu Aug 03 08:28:41 EDT 2017:
+Booting Derby version The Apache Software Foundation - Apache Derby - 10.10.1.1 - (1458268): instance a816c00e-015d-a811-be02-00002fe6b3f0 
+on database directory memory:C:\Users\krispra\Downloads\R\Shiny App\Modeling App\Shiny-App\databaseName=metastore_db with class loader org.apache.spark.sql.hive.client.IsolatedClientLoader$$anon$1@7cafb5cf 
+Loaded from file:/C:/Users/krispra/AppData/Local/rstudio/spark/Cache/spark-1.6.2-bin-hadoop2.6/lib/spark-assembly-1.6.2-hadoop2.6.0.jar
+java.vendor=Oracle Corporation
+java.runtime.version=1.8.0_141-b15
+user.dir=C:\Users\krispra\Downloads\R\Shiny App\Modeling App\Shiny-App
+os.name=Windows 10
+os.arch=amd64
+os.version=10.0
+derby.system.home=null
+Database Class Loader started - derby.database.classpath=''

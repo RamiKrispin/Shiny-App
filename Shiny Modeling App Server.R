@@ -573,7 +573,8 @@ server <- function(input, output,session) {
                              group_by = NULL,
                              var_summarise = NULL,
                              sum_by_flag = 0,
-                             dplyr_fun_option = NULL)
+                             dplyr_fun_option = NULL,
+                             df_summary = NULL)
   
   observeEvent({input$data_option
                 input_df$df
@@ -617,14 +618,9 @@ server <- function(input, output,session) {
                        multiple = TRUE)
                 })
       output$summarise_var  <- renderUI({
-        pickerInput(inputId = "summarise_vars", 
-                    label = "Summarise by", 
-                    choices = names(input_df$df), options = list(`actions-box` = TRUE), 
-                    multiple = TRUE
-                    )
-        # selectInput("summarise_vars", "Summarise by", 
-        #                choices = names(input_df$df), 
-        #                multiple = TRUE)
+        selectInput("summarise_vars", "Summarise by",
+                       choices = names(input_df$df),
+                       multiple = TRUE)
       })
       
       output$summary_name <- renderUI({
@@ -672,6 +668,7 @@ observeEvent({
   input$select_df
   
 },{
+  
   if(input$data_option == "data_summary" &
      !is.null(input$group_by_summary) & 
      !is.null(input$summarise_vars)){
@@ -698,7 +695,7 @@ observeEvent({
   dplyr_df$sum_by_flag
 }, {
   output$dplyr_fun <- renderUI({
-    awesomeCheckboxGroup(inputId = "dplyr_funs", 
+    checkboxGroupInput(inputId = "dplyr_funs", 
                          label = "Summarise", 
                          choices = dplyr_df$dplyr_fun_option, 
                          selected = "Count", 
@@ -707,9 +704,8 @@ observeEvent({
 })
 
 
-observeEvent({
-  input$run_summary
-}, {
+observeEvent(input$run_summary, {
+  print(input$dplyr_funs)
   if(is.null(input$dplyr_funs)){
     showModal(modalDialog(
       title = "Warning - Select Summary Function",
@@ -729,9 +725,9 @@ observeEvent({
     dplyr_str <- paste("input_df$df %>% group_by(", paste(input$group_by_summary, collapse = ","), 
                        ") %>% summarise(Count = n())", sep = " ")
     
-    
+    dplyr_df$df_summary <- eval(parse(text = dplyr_str))
     output$dplyr_table <- DT::renderDataTable(
-      eval(parse(text = dplyr_str)), 
+      dplyr_df$df_summary, 
       server = FALSE, 
       rownames = FALSE,
       options = list(pageLength = 10,

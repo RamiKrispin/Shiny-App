@@ -1,0 +1,13 @@
+name: Shiny-App
+title: Shiny-App
+username:
+account: ramkrisp
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 207482
+bundleId: 957419
+url: https://ramkrisp.shinyapps.io/Shiny-App/
+when: 1503933206.64543
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: .RData|derby.log|LICENSE|log4j.spark.log|README.md|temp.R

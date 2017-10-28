@@ -1,0 +1,26 @@
+17/09/24 15:16:09 INFO SparkContext: Running Spark version 2.1.0
+17/09/24 15:16:10 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+17/09/24 15:16:10 INFO SecurityManager: Changing view acls to: krispra
+17/09/24 15:16:10 INFO SecurityManager: Changing modify acls to: krispra
+17/09/24 15:16:10 INFO SecurityManager: Changing view acls groups to: 
+17/09/24 15:16:10 INFO SecurityManager: Changing modify acls groups to: 
+17/09/24 15:16:10 INFO SecurityManager: SecurityManager: authentication disabled; ui acls disabled; users  with view permissions: Set(krispra); groups with view permissions: Set(); users  with modify permissions: Set(krispra); groups with modify permissions: Set()
+17/09/24 15:16:10 INFO Utils: Successfully started service 'sparkDriver' on port 60053.
+17/09/24 15:16:10 INFO SparkEnv: Registering MapOutputTracker
+17/09/24 15:16:10 INFO SparkEnv: Registering BlockManagerMaster
+17/09/24 15:16:10 INFO BlockManagerMasterEndpoint: Using org.apache.spark.storage.DefaultTopologyMapper for getting topology information
+17/09/24 15:16:10 INFO BlockManagerMasterEndpoint: BlockManagerMasterEndpoint up
+17/09/24 15:16:10 INFO DiskBlockManager: Created local directory at C:\Users\krispra\AppData\Local\Temp\blockmgr-73efdb86-2eee-4f5e-8e74-388de845d4ef
+17/09/24 15:16:10 INFO MemoryStore: MemoryStore started with capacity 366.3 MB
+17/09/24 15:16:10 INFO SparkEnv: Registering OutputCommitCoordinator
+17/09/24 15:16:11 INFO Utils: Successfully started service 'SparkUI' on port 4040.
+17/09/24 15:16:11 INFO SparkUI: Bound SparkUI to 127.0.0.1, and started at http://127.0.0.1:4040
+17/09/24 15:16:11 INFO SparkContext: Added JAR file:/C:/Users/krispra/Documents/R/R-3.4.1/library/sparklyr/java/sparklyr-2.1-2.11.jar at spark://127.0.0.1:60053/jars/sparklyr-2.1-2.11.jar with timestamp 1506280571170
+17/09/24 15:16:11 INFO Executor: Starting executor ID driver on host localhost
+17/09/24 15:16:11 INFO Utils: Successfully started service 'org.apache.spark.network.netty.NettyBlockTransferService' on port 60075.
+17/09/24 15:16:11 INFO NettyBlockTransferService: Server created on 127.0.0.1:60075
+17/09/24 15:16:11 INFO BlockManager: Using org.apache.spark.storage.RandomBlockReplicationPolicy for block replication policy
+17/09/24 15:16:11 INFO BlockManagerMaster: Registering BlockManager BlockManagerId(driver, 127.0.0.1, 60075, None)
+17/09/24 15:16:11 INFO BlockManagerMasterEndpoint: Registering block manager 127.0.0.1:60075 with 366.3 MB RAM, BlockManagerId(driver, 127.0.0.1, 60075, None)
+17/09/24 15:16:11 INFO BlockManagerMaster: Registered BlockManager BlockManagerId(driver, 127.0.0.1, 60075, None)
+17/09/24 15:16:11 INFO BlockManager: Initialized BlockManager: BlockManagerId(driver, 127.0.0.1, 60075, None)
