@@ -174,7 +174,10 @@ tabItem(tabName = "data2",
                                conditionalPanel(condition = "output.loaded_table_flag == '1' && input.data_option == 'data_summary' && output.group_by_flag == '1'",
                                                 uiOutput("dplyr_fun"),
                                                 uiOutput("summary_name"),
-                                                actionButton("run_summary", "Run")
+                                                actionButton("run_summary", "Run"),
+                                                conditionalPanel(condition = "output.dplyr_table_flag == '1'",
+                                                                 actionButton("load_summary_table", "Load")
+                                                                 )
                                )                 
                                ),
                            conditionalPanel(condition = "output.dplyr_table_flag == '1'  && input.data_option == 'data_summary' && output.group_by_flag == '1'",
@@ -523,7 +526,7 @@ tabItem(tabName = "models1",
                                      textOutput("h2o_rf_model_text"),
                                     fluidRow(
                                       box(width = 4, title = "Confusion Matrix",
-                                          tableOutput("cm_table")),
+                                          tableOutput("h2o_rf_cm_table")),
                                       box(width =  8, title = "Plots",
                                           dropdownButton(
                                             selectInput(inputId = "h2o_rf_plots_select", label = "Select Plot",
@@ -539,10 +542,10 @@ tabItem(tabName = "models1",
                                           ),
                                           
                                           conditionalPanel(condition = "input.h2o_rf_plots_select == 'var_imp'",
-                                                           withSpinner(plotlyOutput("h2o_rf_var_imp_plot"))
+                                                           withSpinner(plotlyOutput("h2o_rf_class_var_imp_plot"))
                                                            ),
                                           conditionalPanel(condition = "input.h2o_rf_plots_select == 'rmse'",
-                                                           withSpinner(plotlyOutput("h2o_rf_rmse_plot"))
+                                                           withSpinner(plotlyOutput("h2o_rf_class_rmse_plot"))
                                                            ),
                                           conditionalPanel(condition = "input.h2o_rf_plots_select == 'class_error'",
                                                            withSpinner(plotlyOutput("h2o_rf_class_error_plot"))
@@ -551,6 +554,40 @@ tabItem(tabName = "models1",
                                                            withSpinner(plotlyOutput("h2o_rf_class_logloss_plot"))
                                           )
                                           )  
+                                    )
+                   ),
+                   conditionalPanel(condition = "input.binomial_models == 'h2o_gbm' && output.h2o_gbm_flag == '1'", 
+                                    textOutput("h2o_gbm_model_text"),
+                                    fluidRow(
+                                      box(width = 4, title = "Confusion Matrix",
+                                          tableOutput("h2o_gbm_cm_table")),
+                                      box(width =  8, title = "Plots",
+                                          dropdownButton(
+                                            selectInput(inputId = "h2o_gbm_plots_select", label = "Select Plot",
+                                                        choices = c("Variable Importance" = "var_imp",
+                                                                    "RMSE" = "rmse",
+                                                                    "Classification Error" = "class_error",
+                                                                    "Logloss" = "logloss"
+                                                        ), 
+                                                        selected = "Variable Importance"
+                                            ),
+                                            circle = TRUE, status = "danger", icon = icon("gear"), width = "300px",
+                                            tooltip = tooltipOptions(title = "Click to see inputs !")
+                                          ),
+                                          
+                                          conditionalPanel(condition = "input.h2o_gbm_plots_select == 'var_imp'",
+                                                           withSpinner(plotlyOutput("h2o_gbm_class_var_imp_plot"))
+                                          ),
+                                          conditionalPanel(condition = "input.h2o_gbm_plots_select == 'rmse'",
+                                                           withSpinner(plotlyOutput("h2o_gbm_class_rmse_plot"))
+                                          ),
+                                          conditionalPanel(condition = "input.h2o_gbm_plots_select == 'class_error'",
+                                                           withSpinner(plotlyOutput("h2o_gbm_class_error_plot"))
+                                          ),
+                                          conditionalPanel(condition = "input.h2o_gbm_plots_select == 'logloss'",
+                                                           withSpinner(plotlyOutput("h2o_gbm_class_logloss_plot"))
+                                          )
+                                      )  
                                     )
                    ),
                    conditionalPanel(condition = "input.binomial_models == 'h2o_dl' && output.h2o_dl_flag == '1'", 
@@ -573,10 +610,10 @@ tabItem(tabName = "models1",
                                           ),
 
                                           conditionalPanel(condition = "input.h2o_dl_plots_select == 'var_imp'",
-                                                           withSpinner(plotlyOutput("h2o_dl_var_imp_plot"))
+                                                           withSpinner(plotlyOutput("h2o_dl_class_var_imp_plot"))
                                           ),
                                           conditionalPanel(condition = "input.h2o_dl_plots_select == 'rmse'",
-                                                           withSpinner(plotlyOutput("h2o_dl_rmse_plot"))
+                                                           withSpinner(plotlyOutput("h2o_dl_class_rmse_plot"))
                                           ),
                                           conditionalPanel(condition = "input.h2o_dl_plots_select == 'class_error'",
                                                            withSpinner(plotlyOutput("h2o_dl_class_error_plot"))
